@@ -1,0 +1,57 @@
+# Experiment Matrix Definition
+# ============================
+# This file defines the experiment parameter space for hyperparameter sweeps.
+# Modify this file to customize experiment combinations without changing code.
+#
+# Usage:
+#   python experiments/config_generator.py --generate-all
+#   python experiments/config_generator.py --generate-all --matrix=custom_matrix.yaml
+
+# Model types to include in experiments
+# Valid options: baseline, convlstm, transformer, fusion
+model_types:
+  - baseline
+  - convlstm
+  - transformer
+  - fusion
+
+# Input days combinations (negative integers relative to prediction time)
+# Each list represents one configuration
+input_days_combinations:
+  - [-1]
+  - [-2, -1]
+  - [-3, -2, -1]
+  - [-4, -3, -2, -1]
+  - [-5, -4, -3, -2, -1]
+  - [-6, -5, -4, -3, -2, -1]
+  - [-7, -6, -5, -4, -3, -2, -1]
+
+# Target days configuration
+# Each entry maps target_days_count to its configuration:
+#   - days: list of target days (positive integers)
+#   - num_subsamples: number of subsamples for this target configuration
+target_days_config:
+  1:
+    days: [1]
+    num_subsamples: 14
+  2:
+    days: [1, 2]
+    num_subsamples: 8
+  3:
+    days: [1, 2, 3]
+    num_subsamples: 6
+
+# Undersampling modes
+# "dynamic": Single run per combo, resample negatives each epoch (1:1 ratio)
+# "static": k-fold, one run per fold (legacy, uses num_subsamples from target_days_config)
+# false: No undersampling
+undersampling_modes:
+  - "dynamic"
+  # - "static"  # Legacy k-fold undersampling
+  # - false      # No undersampling
+
+# Optional filters (empty lists = no filtering)
+# include_only: Only include these model types (overrides model_types if non-empty)
+# exclude: Exclude these model types from generation
+include_only: []  # e.g., ["fusion", "transformer"]
+exclude: []       # e.g., ["baseline"]

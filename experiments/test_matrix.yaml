@@ -1,0 +1,15 @@
+# Test Matrix - Small subset for quick testing
+model_types:
+  - fusion
+
+input_days_combinations:
+  - [-3, -2, -1]
+  - [-7, -6, -5, -4, -3, -2, -1]
+
+target_days_config:
+  1:
+    days: [1]
+    num_subsamples: 2
+
+include_only: []
+exclude: []
