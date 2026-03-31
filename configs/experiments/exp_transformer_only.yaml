@@ -1,0 +1,12 @@
+# Experiment: Transformer Only (OMNI time series)
+# Ablation study: no SDO images, only solar wind parameters
+#
+# Usage:
+#   python scripts/train.py --config-name=local \
+#       +experiments=exp_transformer_only experiment.name=tf_only_001
+
+experiment:
+  name: "transformer_only"
+
+model:
+  model_type: "transformer"  # Use TransformerOnlyModel

@@ -1,0 +1,12 @@
+# Experiment: ConvLSTM Only (SDO images)
+# Ablation study: no OMNI data, only SDO images
+#
+# Usage:
+#   python scripts/train.py --config-name=local \
+#       +experiments=exp_convlstm_only experiment.name=conv_only_001
+
+experiment:
+  name: "convlstm_only"
+
+model:
+  model_type: "convlstm"  # Use ConvLSTMOnlyModel

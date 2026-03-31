@@ -1,0 +1,23 @@
+# Experiment: High Capacity Model
+# Larger model for better performance (requires more compute)
+#
+# Usage:
+#   python scripts/train.py --config-name=wulver \
+#       +experiments=exp_high_capacity experiment.name=high_cap_001
+
+experiment:
+  name: "high_capacity"
+  batch_size: 8
+
+model:
+  d_model: 512
+  transformer_nhead: 16
+  transformer_num_layers: 6
+  transformer_dim_feedforward: 1024
+  convlstm_hidden_channels: 128
+  convlstm_num_layers: 3
+  fusion_num_heads: 8
+
+training:
+  learning_rate: 0.0001
+  epochs: 200

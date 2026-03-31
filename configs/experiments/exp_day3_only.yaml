@@ -1,0 +1,16 @@
+# Experiment: Day 3 Only Prediction
+# Focus on 48-72h forecast only
+#
+# Usage:
+#   python scripts/train.py --config-name=local \
+#       +experiments=exp_day3_only experiment.name=day3_exp_001
+
+experiment:
+  name: "day3_only"
+
+sampling:
+  target_days:
+    - 3  # Only Day 3 (48-72h forecast)
+
+model:
+  output_seq_len: 8  # 1 day = 8 timesteps (3h intervals)

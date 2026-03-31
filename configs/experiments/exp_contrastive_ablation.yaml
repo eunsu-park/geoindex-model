@@ -1,0 +1,12 @@
+# Experiment: Contrastive Loss Ablation
+# Disable contrastive loss to measure its contribution
+#
+# Usage:
+#   python scripts/train.py --config-name=local \
+#       +experiments=exp_contrastive_ablation experiment.name=no_contrastive_001
+
+experiment:
+  name: "no_contrastive"
+
+training:
+  lambda_contrastive: 0.0  # Disable contrastive loss

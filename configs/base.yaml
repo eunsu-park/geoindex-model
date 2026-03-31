@@ -1,0 +1,452 @@
+# Base Configuration for Multi-Modal Solar Wind Prediction Model
+# This file contains shared settings across all environments.
+# Environment-specific configs (local.yaml) override these values.
+
+defaults:
+  - _self_
+  - override hydra/job_logging: none
+  - override hydra/hydra_logging: none
+
+hydra:
+  output_subdir: null
+  run:
+    dir: .
+  job:
+    chdir: false
+
+# =============================================================================
+# Experiment Settings
+# =============================================================================
+experiment:
+  name: "base"
+  seed: 250104
+  batch_size: 4
+
+# =============================================================================
+# Sampling Settings (Undersampling for class imbalance)
+# =============================================================================
+sampling:
+  enable_undersampling: false
+  undersampling_mode: "static"    # "static" (k-fold) or "dynamic" (per-epoch resample)
+  num_subsamples: 14              # static mode: number of folds (ignored in dynamic)
+  subsample_index: 0              # static mode: fold index (ignored in dynamic)
+  # Input days: negative values (days before reference time)
+  # Day -7 = 7 days before, Day -1 = 1 day before
+  input_days:
+    - -7
+    - -6
+    - -5
+    - -4
+    - -3
+    - -2
+    - -1
+  # Target days: positive values (days after reference time)
+  # Day 1 = 0-24h, Day 2 = 24-48h, Day 3 = 48-72h
+  target_days:
+    - 1
+    - 2
+    - 3
+
+# =============================================================================
+# Environment Settings (Override in local.yaml)
+# =============================================================================
+environment:
+  device: "cpu"
+  data_root: ""
+  save_root: ""
+  num_workers: 0
+
+# =============================================================================
+# Data Settings
+# =============================================================================
+data:
+  # ---------------------------------------------------------------------------
+  # Modality Activation Flags
+  # Control which data sources are active for training/inference.
+  # Extensible: add new modalities here as needed.
+  # ---------------------------------------------------------------------------
+  modalities:
+    timeseries: true      # CSV-based solar wind time series (new dataset)
+    sdo: false            # SDO images (future: set true to activate)
+    omni_hdf5: false      # Legacy OMNI HDF5 time series
+
+  # ---------------------------------------------------------------------------
+  # CSV Time Series Data Settings (modalities.timeseries)
+  # Source: setup-sw-db project, 30-min aggregated solar wind + geomagnetic indices
+  # Each CSV file = one event, named YYYYMMDDHHMMSS.csv
+  # See DATASET_GUIDE.md for full variable descriptions
+  # ---------------------------------------------------------------------------
+  timeseries:
+    dataset_dir: "sw_events"      # Directory name under data_root containing CSVs
+    file_list_suffix: "full"      # For train/val/test file lists: {dataset_dir}_{suffix}_{phase}.csv
+
+    interval_minutes: 30
+    points_per_day: 48
+
+    # Event window: B days before + A days after reference time T
+    # Total timesteps = (days_before + days_after) * points_per_day
+    days_before: 5                # Input window (default: 5 days = 240 timesteps)
+    days_after: 3                 # Target window (default: 3 days = 144 timesteps)
+
+    # Input variables (21 solar wind + 2 geomagnetic = 23 total)
+    # Each physical quantity has avg/min/max triplet from 30-min aggregation
+    input_variables:
+      - "v_avg"
+      - "v_min"
+      - "v_max"
+      - "np_avg"
+      - "np_min"
+      - "np_max"
+      - "t_avg"
+      - "t_min"
+      - "t_max"
+      - "bx_avg"
+      - "bx_min"
+      - "bx_max"
+      - "by_avg"
+      - "by_min"
+      - "by_max"
+      - "bz_avg"
+      - "bz_min"
+      - "bz_max"
+      - "bt_avg"
+      - "bt_min"
+      - "bt_max"
+      - "ap30"
+      - "hp30"
+
+    # Target variable(s) for regression
+    target_variables:
+      - "ap30"
+
+    # Per-variable normalization
+    normalization:
+      default: "zscore"
+      methods:
+        # Solar wind speed (positive, long-tail ~250-800 km/s)
+        v_avg: "log_zscore"
+        v_min: "log_zscore"
+        v_max: "log_zscore"
+        # Proton density (positive, long-tail ~0.1-50 n/cm³)
+        np_avg: "log_zscore"
+        np_min: "log_zscore"
+        np_max: "log_zscore"
+        # Proton temperature (positive, long-tail ~10⁴-10⁶ K)
+        t_avg: "log_zscore"
+        t_min: "log_zscore"
+        t_max: "log_zscore"
+        # IMF Bx (symmetric ±20 nT)
+        bx_avg: "zscore"
+        bx_min: "zscore"
+        bx_max: "zscore"
+        # IMF By GSM (symmetric ±20 nT)
+        by_avg: "zscore"
+        by_min: "zscore"
+        by_max: "zscore"
+        # IMF Bz GSM (symmetric ±20 nT) — most important for geomagnetic storms
+        bz_avg: "zscore"
+        bz_min: "zscore"
+        bz_max: "zscore"
+        # IMF magnitude (positive, 0-50 nT)
+        bt_avg: "log_zscore"
+        bt_min: "log_zscore"
+        bt_max: "log_zscore"
+        # Geomagnetic indices (includes 0, quasi-logarithmic)
+        ap30: "log1p_zscore"
+        hp30: "log1p_zscore"
+
+  # ---------------------------------------------------------------------------
+  # SDO (Solar Dynamics Observatory) image settings
+  # Currently disabled (modalities.sdo: false)
+  # Data structure: -7 days to reference time, 6-hour intervals
+  # Total: 28 timesteps (index 0-27), 4 points per day
+  # Actual range determined by: sampling.input_days
+  # ---------------------------------------------------------------------------
+  sdo:
+    wavelengths:
+      - "aia_193"
+      - "aia_211"
+      - "hmi_magnetogram"
+    image_size: 64
+    interval_hours: 6          # Used for day-to-index conversion
+    base_offset_hours: -168    # Data starts at -7 days = -168 hours
+
+  # ---------------------------------------------------------------------------
+  # OMNI HDF5 solar wind data settings (legacy)
+  # Currently disabled (modalities.omni_hdf5: false)
+  # Data structure: -7 days to +3 days, 3-hour intervals
+  # Total: 80 timesteps (index 0-79), 8 points per day
+  # Input range determined by: sampling.input_days
+  # Target range determined by: sampling.target_days
+  # ---------------------------------------------------------------------------
+  omni:
+    dataset_name: "original_64"
+    dataset_suffix: "full"
+    interval_hours: 3          # Used for day-to-index conversion
+    base_offset_hours: -168    # Data starts at -7 days = -168 hours
+
+    # Input variables (time range from sampling.input_days)
+    input:
+      variables:
+        - "bx_gse_gsm_nt"
+        - "by_gsm_nt"
+        - "bz_gsm_nt"
+        - "b_magnitude_of_avg_field_vector_nt"
+        - "plasma_flow_speed_km_s"
+        - "proton_density_n_cm3"
+        - "proton_temperature_k"
+        - "kp_index"
+        - "ap_index_nt"
+        - "dst_index_nt"
+        - "f10_7_index_sfu"
+        - "sunspot_number_r"
+
+    # Target variables (time range from sampling.target_days)
+    target:
+      variables:
+        - "ap_index_nt"
+
+    # Per-variable normalization (for OMNI HDF5 data)
+    normalization:
+      default: "zscore"
+      methods:
+        bx_gse_gsm_nt: "zscore"
+        by_gsm_nt: "zscore"
+        bz_gsm_nt: "zscore"
+        dst_index_nt: "zscore"
+        plasma_flow_speed_km_s: "log_zscore"
+        proton_density_n_cm3: "log_zscore"
+        proton_temperature_k: "log_zscore"
+        b_magnitude_of_avg_field_vector_nt: "log_zscore"
+        f10_7_index_sfu: "log_zscore"
+        ap_index_nt: "log1p_zscore"
+        kp_index: "log1p_zscore"
+        sunspot_number_r: "log1p_zscore"
+
+  # ---------------------------------------------------------------------------
+  # Legacy flat settings (DEPRECATED - for backward compatibility only)
+  # These are ONLY used if sampling.input_days/target_days are NOT set
+  # and modalities.omni_hdf5 is true.
+  # ---------------------------------------------------------------------------
+  wavelengths:
+    - "aia_193"
+    - "aia_211"
+    - "hmi_magnetogram"
+  sdo_image_size: 64
+  sdo_start_index: 12
+  sdo_end_index: 28
+
+  input_variables:
+    - "bx_gse_gsm_nt"
+    - "by_gsm_nt"
+    - "bz_gsm_nt"
+    - "b_magnitude_of_avg_field_vector_nt"
+    - "plasma_flow_speed_km_s"
+    - "proton_density_n_cm3"
+    - "proton_temperature_k"
+    - "kp_index"
+    - "ap_index_nt"
+    - "dst_index_nt"
+    - "f10_7_index_sfu"
+    - "sunspot_number_r"
+  input_start_index: 0
+  input_end_index: 56
+
+  target_variables:
+    - "ap_index_nt"
+  target_start_index: 56
+  target_end_index: 80
+
+# =============================================================================
+# Model Architecture
+# =============================================================================
+model:
+  # Model type selection:
+  # Time series only: "transformer", "tcn", "linear"
+  # SDO images only: "convlstm"
+  # Multi-modal: "fusion", "baseline"
+  model_type: "transformer"
+
+  # Shared dimension across modalities
+  d_model: 128
+
+  # Transformer encoder (for time series)
+  transformer_nhead: 4
+  transformer_num_layers: 2
+  transformer_dim_feedforward: 256
+  transformer_dropout: 0.1
+
+  # ConvLSTM (for SDO images)
+  convlstm_input_channels: 3
+  convlstm_hidden_channels: 32
+  convlstm_kernel_size: 3
+  convlstm_num_layers: 2
+
+  # Cross-modal fusion (only used when model_type="fusion")
+  fusion_num_heads: 4
+  fusion_dropout: 0.1
+
+  # Baseline model (only used when model_type="baseline")
+  baseline_dropout: 0.1
+
+  # TCN (Temporal Convolutional Network)
+  tcn_channels:
+    - 64
+    - 128
+    - 256
+  tcn_kernel_size: 3
+  tcn_dropout: 0.1
+
+  # Output sequence length
+  # Auto-computed from data config if null, or override manually
+  output_seq_len: null
+
+# =============================================================================
+# Training Settings
+# =============================================================================
+training:
+  # Loss functions
+  # Options: mse, mae, huber, weighted_mse, solar_wind_weighted
+  regression_loss_type: "solar_wind_weighted"
+  huber_delta: 10.0
+
+  # Contrastive loss (only active when SDO modality is enabled)
+  contrastive_loss_type: "consistency"
+  contrastive_temperature: 0.3
+  lambda_contrastive: 0.5
+
+  # ---------------------------------------------------------------------------
+  # Contrastive Warmup Settings
+  # ---------------------------------------------------------------------------
+  contrastive_warmup:
+    enable: false
+    warmup_epochs: 10
+    lambda_start: 1.0
+    lambda_end: 0.2
+
+  # ---------------------------------------------------------------------------
+  # General Weighted MSE Settings (regression_loss_type='weighted_mse')
+  # ---------------------------------------------------------------------------
+  weighted_mse:
+    threshold: 50.0
+    high_weight: 10.0
+    low_weight: 1.0
+
+  # ---------------------------------------------------------------------------
+  # Solar Wind Weighted Loss Settings (regression_loss_type='solar_wind_weighted')
+  # Applies weights based on NOAA geomagnetic activity scale
+  # Supports both ap_index_nt (3h) and ap30 (30min) targets
+  # ---------------------------------------------------------------------------
+  solar_wind_weighted:
+    base_loss: "mse"
+    weighting_mode: "multi_tier"
+    combine_temporal: true
+    temporal_weight_range:
+      - 0.5
+      - 1.0
+    threshold: 30.0
+    high_weight: 10.0
+    alpha: 5.0
+    beta: 1.5
+    denormalize: true
+
+  # Optimizer
+  optimizer: "adam"
+  learning_rate: 0.0002
+  weight_decay: 0.0
+
+  # ---------------------------------------------------------------------------
+  # Learning Rate Schedule
+  # ---------------------------------------------------------------------------
+  scheduler_type: "reduce_on_plateau"
+
+  scheduler_factor: 0.5
+  scheduler_patience: 5
+
+  cosine_annealing:
+    T_0: 10
+    T_mult: 2
+    eta_min: 1.0e-6
+
+  lr_warmup:
+    enable: false
+    warmup_epochs: 5
+    warmup_start_factor: 0.1
+
+  # ---------------------------------------------------------------------------
+  # Gradient Accumulation
+  # ---------------------------------------------------------------------------
+  gradient_accumulation_steps: 1
+
+  # Gradient clipping
+  gradient_clip_max_norm: 1.0
+
+  # Training loop
+  epochs: 100
+  report_freq: 100
+  model_save_freq: 20
+
+  # ---------------------------------------------------------------------------
+  # Early Stopping
+  # ---------------------------------------------------------------------------
+  early_stopping_patience: 10
+  early_stopping_min_delta: 0.0
+
+  # Plotting
+  enable_plot: true
+
+  # Two-stage training
+  pretrained_checkpoint: null
+
+# =============================================================================
+# Validation Settings
+# =============================================================================
+validation:
+  epoch: null
+  checkpoint_path: ""
+  output_dir: ""
+  compute_alignment: true
+  save_plots: true
+  save_npz: true
+  report_freq: 50
+
+# =============================================================================
+# Test Settings (Inference with or without ground truth)
+# =============================================================================
+test:
+  epoch: null
+  checkpoint_path: ""
+  output_dir: ""
+  report_freq: 50
+  save_plots: true
+  save_npz: true
+
+# =============================================================================
+# Monte Carlo Dropout Settings
+# =============================================================================
+mcd:
+  epoch: null
+  checkpoint_path: ""
+  output_dir: ""
+  num_mc_samples: 100
+  create_plots: true
+  n_std: 2.0
+
+# =============================================================================
+# Saliency Analysis Settings
+# =============================================================================
+saliency:
+  epoch: null
+  checkpoint_path: ""
+  output_dir: ""
+  ig_steps: 50
+  create_plots: true
+
+# =============================================================================
+# Attention Analysis Settings
+# =============================================================================
+attention:
+  epoch: null
+  checkpoint_path: ""
+  output_dir: ""
+  create_plots: false

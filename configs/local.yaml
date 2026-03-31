@@ -1,0 +1,60 @@
+# Local Development Configuration (macOS with MPS)
+# Inherits from base.yaml and overrides environment-specific settings.
+
+defaults:
+  - base
+  - _self_
+
+# =============================================================================
+# Experiment (Override)
+# =============================================================================
+experiment:
+  name: "local"
+
+# =============================================================================
+# Environment (Local macOS)
+# =============================================================================
+environment:
+  device: "mps"
+  data_root: "/opt/projects/10_Harim/01_AP/03_Dataset"
+  save_root: "/opt/projects/10_Harim/01_AP/04_Result"
+  num_workers: 8
+
+# =============================================================================
+# Training (Local dev settings - fewer epochs, frequent saves)
+# =============================================================================
+training:
+  epochs: 30
+  model_save_freq: 5
+
+# =============================================================================
+# Validation (epoch-based path resolution)
+# Just set epoch - paths auto-generated from save_root/experiment.name
+# =============================================================================
+validation:
+  epoch: 10
+
+# =============================================================================
+# Test (epoch-based path resolution)
+# =============================================================================
+test:
+  epoch: 10
+
+# =============================================================================
+# Monte Carlo Dropout (epoch-based path resolution)
+# =============================================================================
+mcd:
+  epoch: 10
+
+# =============================================================================
+# Saliency Analysis (epoch-based path resolution)
+# =============================================================================
+saliency:
+  epoch: 10
+
+# =============================================================================
+# Attention Analysis (epoch-based path resolution)
+# =============================================================================
+attention:
+  epoch: 10
+  create_plots: true

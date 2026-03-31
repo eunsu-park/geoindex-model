@@ -1,0 +1,15 @@
+# Experiment: Short Input Window
+# Use only recent 3 days instead of 7 days
+#
+# Usage:
+#   python scripts/train.py --config-name=local \
+#       +experiments=exp_short_input experiment.name=short_input_001
+
+experiment:
+  name: "short_input_3days"
+
+sampling:
+  input_days:
+    - -3
+    - -2
+    - -1  # Only last 3 days before reference time
