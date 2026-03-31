@@ -1,0 +1,59 @@
+# Wulver HPC Cluster Configuration (CUDA)
+# Inherits from base.yaml and overrides environment-specific settings.
+
+defaults:
+  - base
+  - _self_
+
+# =============================================================================
+# Experiment (Override)
+# =============================================================================
+experiment:
+  name: "wulver"
+
+# =============================================================================
+# Environment (HPC Cluster with CUDA)
+# =============================================================================
+environment:
+  device: "cuda"
+  data_root: "/mmfs1/home/hl545/ap/final/datasets"
+  save_root: "/mmfs1/home/hl545/ap/final/results"
+  num_workers: 2
+
+# =============================================================================
+# Training (Full training settings)
+# =============================================================================
+training:
+  epochs: 100
+  model_save_freq: 10
+
+# =============================================================================
+# Validation (epoch-based path resolution)
+# Just set epoch - paths auto-generated from save_root/experiment.name
+# =============================================================================
+validation:
+  epoch: 100
+
+# =============================================================================
+# Test (epoch-based path resolution)
+# =============================================================================
+test:
+  epoch: 100
+
+# =============================================================================
+# Monte Carlo Dropout (epoch-based path resolution)
+# =============================================================================
+mcd:
+  epoch: 100
+
+# =============================================================================
+# Saliency Analysis (epoch-based path resolution)
+# =============================================================================
+saliency:
+  epoch: 100
+
+# =============================================================================
+# Attention Analysis (epoch-based path resolution)
+# =============================================================================
+attention:
+  epoch: 100
