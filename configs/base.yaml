@@ -77,6 +77,13 @@ data:
   # See DATASET_GUIDE.md for full variable descriptions
   # ---------------------------------------------------------------------------
   timeseries:
+    # --- Directory mode (preferred): point directly to train/val/test dirs ---
+    # Paths can be absolute or relative to data_root
+    train_dir: null               # e.g., "train" or "/absolute/path/to/train"
+    validation_dir: null          # e.g., "validation"
+    test_dir: null                # Falls back to validation_dir if null
+
+    # --- File list mode (legacy): dataset_dir + file_list_suffix ---
     dataset_dir: "sw_events"      # Directory name under data_root containing CSVs
     file_list_suffix: "full"      # For train/val/test file lists: {dataset_dir}_{suffix}_{phase}.csv
 
