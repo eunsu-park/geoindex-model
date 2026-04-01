@@ -1,0 +1,11 @@
+torch
+numpy
+pandas
+matplotlib
+h5py
+hydra-core
+omegaconf
+opencv-python
+pyyaml
+tqdm
+pytest
