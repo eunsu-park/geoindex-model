@@ -16,9 +16,19 @@ experiment:
 # =============================================================================
 environment:
   device: "mps"
-  data_root: "/opt/projects/10_Harim/01_AP/03_Dataset"
-  save_root: "/opt/projects/10_Harim/01_AP/04_Result"
+  data_root: "/Users/eunsupark/Projects/ap/dataset"
+  save_root: "/Users/eunsupark/Projects/ap/results"
   num_workers: 8
+
+# =============================================================================
+# Data (Directory mode)
+# =============================================================================
+data:
+  timeseries:
+    train_dir: "train"
+    validation_dir: "validation"
+    days_before: 5
+    days_after: 3
 
 # =============================================================================
 # Training (Local dev settings - fewer epochs, frequent saves)
