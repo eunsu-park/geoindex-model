@@ -1579,6 +1579,10 @@ class CSVBaseDataset(Dataset):
     def __init__(self, config):
         """Initialize CSV base dataset.
 
+        Supports two data organization modes:
+        1. Directory mode: train_dir/validation_dir point to directories of CSV files
+        2. File list mode: dataset_dir + file_list_suffix for file list CSVs
+
         Args:
             config: Hydra configuration object with data.timeseries section
         """
@@ -1586,8 +1590,6 @@ class CSVBaseDataset(Dataset):
         self.data_root = config.environment.data_root
         ts_cfg = get_timeseries_config(config)
 
-        self.dataset_dir = ts_cfg.dataset_dir
-        self.file_list_suffix = ts_cfg.file_list_suffix
         self.points_per_day = ts_cfg.points_per_day
         self.days_before = ts_cfg.days_before
         self.days_after = ts_cfg.days_after
@@ -1604,28 +1606,61 @@ class CSVBaseDataset(Dataset):
             self.input_variables + self.target_variables
         ))
 
-        # Load file lists
-        train_list_path = os.path.join(
-            self.data_root,
-            f"{self.dataset_dir}_{self.file_list_suffix}_train.csv"
-        )
-        self.train_list = self._load_file_list(train_list_path)
+        # Determine data loading mode
+        self.train_dir = getattr(ts_cfg, 'train_dir', None)
+        self.validation_dir = getattr(ts_cfg, 'validation_dir', None)
+        self.test_dir = getattr(ts_cfg, 'test_dir', None)
 
-        validation_list_path = os.path.join(
-            self.data_root,
-            f"{self.dataset_dir}_{self.file_list_suffix}_validation.csv"
-        )
-        self.validation_list = self._load_file_list(validation_list_path)
+        if self.train_dir is not None:
+            # Directory mode: scan directories for CSV files
+            self._use_directory_mode = True
+            train_dir_path = self._resolve_path(self.train_dir)
+            val_dir_path = self._resolve_path(self.validation_dir)
+
+            self.train_list = self._scan_directory(train_dir_path)
+            self.validation_list = self._scan_directory(val_dir_path)
+
+            # For statistics computation
+            train_csv_paths = [
+                os.path.join(train_dir_path, fn) for fn, _ in self.train_list
+            ]
+
+            # Statistics file alongside data
+            statistics_file_path = os.path.join(
+                self.data_root, "stats.pkl"
+            )
+
+            logger.info(f"Directory mode: train={train_dir_path} ({len(self.train_list)} files), "
+                        f"validation={val_dir_path} ({len(self.validation_list)} files)")
+        else:
+            # File list mode (legacy)
+            self._use_directory_mode = False
+            self.dataset_dir = ts_cfg.dataset_dir
+            self.file_list_suffix = ts_cfg.file_list_suffix
+
+            train_list_path = os.path.join(
+                self.data_root,
+                f"{self.dataset_dir}_{self.file_list_suffix}_train.csv"
+            )
+            self.train_list = self._load_file_list(train_list_path)
+
+            validation_list_path = os.path.join(
+                self.data_root,
+                f"{self.dataset_dir}_{self.file_list_suffix}_validation.csv"
+            )
+            self.validation_list = self._load_file_list(validation_list_path)
+
+            train_csv_paths = [
+                os.path.join(self.data_root, self.dataset_dir, fn)
+                for fn, _ in self.train_list
+            ]
+
+            statistics_file_path = os.path.join(
+                self.data_root,
+                f"{self.dataset_dir}_{self.file_list_suffix}_stats.pkl"
+            )
 
         # Compute/load statistics from training data
-        statistics_file_path = os.path.join(
-            self.data_root,
-            f"{self.dataset_dir}_{self.file_list_suffix}_stats.pkl"
-        )
-        train_csv_paths = [
-            os.path.join(self.data_root, self.dataset_dir, fn)
-            for fn, _ in self.train_list
-        ]
         self.stat_dict = compute_statistics_csv(
             stat_file_path=statistics_file_path,
             csv_file_paths=train_csv_paths,
@@ -1647,6 +1682,50 @@ class CSVBaseDataset(Dataset):
                     f"{self.input_len} timesteps")
         logger.info(f"Target: {len(self.target_variables)} vars, "
                     f"{self.target_len} timesteps")
+
+    def _resolve_path(self, path: str) -> str:
+        """Resolve a path that may be absolute or relative to data_root."""
+        if os.path.isabs(path):
+            return path
+        return os.path.join(self.data_root, path)
+
+    def _scan_directory(self, dir_path: str) -> List[Tuple[str, int]]:
+        """Scan directory for CSV files and return as file list.
+
+        Args:
+            dir_path: Absolute path to directory containing CSV files
+
+        Returns:
+            Sorted list of (filename, label=0) tuples
+        """
+        if not os.path.isdir(dir_path):
+            raise FileNotFoundError(f"Data directory not found: {dir_path}")
+
+        csv_files = sorted([
+            f for f in os.listdir(dir_path) if f.endswith('.csv')
+        ])
+
+        if not csv_files:
+            raise ValueError(f"No CSV files found in {dir_path}")
+
+        return [(f, 0) for f in csv_files]
+
+    def _get_file_path(self, file_name: str, phase: str = "train") -> str:
+        """Get full file path based on loading mode and phase.
+
+        Args:
+            file_name: CSV filename
+            phase: "train", "validation", or "test"
+        """
+        if self._use_directory_mode:
+            if phase == "train":
+                return os.path.join(self._resolve_path(self.train_dir), file_name)
+            elif phase == "validation":
+                return os.path.join(self._resolve_path(self.validation_dir), file_name)
+            elif phase == "test":
+                test_dir = self.test_dir or self.validation_dir
+                return os.path.join(self._resolve_path(test_dir), file_name)
+        return os.path.join(self.data_root, self.dataset_dir, file_name)
 
     def _load_file_list(self, csv_path: str) -> List[Tuple[str, int]]:
         """Load file list from CSV.
@@ -1680,18 +1759,19 @@ class CSVBaseDataset(Dataset):
 
         return list(zip(file_names, labels))
 
-    def _read_and_process(self, file_name: str) -> Tuple[np.ndarray, np.ndarray]:
+    def _read_and_process(self, file_name: str, phase: str = "train") -> Tuple[np.ndarray, np.ndarray]:
         """Read CSV file and split into normalized input/target arrays.
 
         Args:
             file_name: CSV filename
+            phase: "train", "validation", or "test" (for directory mode path resolution)
 
         Returns:
             Tuple of (input_array, target_array)
             input_array shape: (input_len, num_input_vars)
             target_array shape: (target_len, num_target_vars)
         """
-        file_path = os.path.join(self.data_root, self.dataset_dir, file_name)
+        file_path = self._get_file_path(file_name, phase)
         raw = CSVEventReader.read(file_path, variables=self.all_variables)
 
         # Normalize each variable
@@ -1759,7 +1839,7 @@ class CSVTrainDataset(CSVBaseDataset):
 
     def __getitem__(self, idx):
         file_name, label = self.file_list[idx]
-        input_array, target_array = self._read_and_process(file_name)
+        input_array, target_array = self._read_and_process(file_name, phase="train")
         label_array = np.array([[label]], dtype=np.float32)
 
         return {
@@ -1784,7 +1864,7 @@ class CSVValidationDataset(CSVBaseDataset):
 
     def __getitem__(self, idx):
         file_name, label = self.file_list[idx]
-        input_array, target_array = self._read_and_process(file_name)
+        input_array, target_array = self._read_and_process(file_name, phase="validation")
         label_array = np.array([[label]], dtype=np.float32)
 
         return {
@@ -1801,16 +1881,20 @@ class CSVTestDataset(CSVBaseDataset):
     def __init__(self, config):
         super().__init__(config)
 
-        test_list_path = os.path.join(
-            self.data_root,
-            f"{self.dataset_dir}_{self.file_list_suffix}_test.csv"
-        )
-
-        if os.path.exists(test_list_path):
-            self.file_list = self._load_file_list(test_list_path)
+        if self._use_directory_mode:
+            test_dir = self.test_dir or self.validation_dir
+            test_dir_path = self._resolve_path(test_dir)
+            self.file_list = self._scan_directory(test_dir_path)
         else:
-            logger.warning(f"Test list not found at {test_list_path}, using validation list")
-            self.file_list = self.validation_list
+            test_list_path = os.path.join(
+                self.data_root,
+                f"{self.dataset_dir}_{self.file_list_suffix}_test.csv"
+            )
+            if os.path.exists(test_list_path):
+                self.file_list = self._load_file_list(test_list_path)
+            else:
+                logger.warning(f"Test list not found at {test_list_path}, using validation list")
+                self.file_list = self.validation_list
 
         self.num = len(self.file_list)
         logger.info(f"CSVTestDataset: {self.num} samples")
@@ -1820,7 +1904,7 @@ class CSVTestDataset(CSVBaseDataset):
 
     def __getitem__(self, idx):
         file_name, label = self.file_list[idx]
-        input_array, target_array = self._read_and_process(file_name)
+        input_array, target_array = self._read_and_process(file_name, phase="test")
         label_array = np.array([[label]], dtype=np.float32)
 
         return {
