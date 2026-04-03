@@ -41,9 +41,13 @@ data:
 # =============================================================================
 # Training (Local dev settings - fewer epochs, frequent saves)
 # =============================================================================
+experiment:
+  batch_size: 128
+
 training:
   epochs: 30
   model_save_freq: 5
+  report_freq: 200
 
 # =============================================================================
 # Validation (epoch-based path resolution)
