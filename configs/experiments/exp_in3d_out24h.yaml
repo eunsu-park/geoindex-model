@@ -1,0 +1,16 @@
+# Experiment: 3-day input, 24-hour output
+# Input: d-3 ~ d-1 (144 timesteps), Output: 0~24h (48 timesteps)
+#
+# Usage:
+#   python scripts/train.py --config-name=local \
+#       +experiments=exp_in3d_out24h
+
+experiment:
+  name: "in3d_out24h"
+
+data:
+  timeseries:
+    input_start: -144
+    input_end: 0
+    target_start: 0
+    target_end: 48

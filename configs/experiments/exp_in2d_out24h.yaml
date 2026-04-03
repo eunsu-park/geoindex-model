@@ -1,0 +1,16 @@
+# Experiment: 2-day input, 24-hour output
+# Input: d-2 ~ d-1 (96 timesteps), Output: 0~24h (48 timesteps)
+#
+# Usage:
+#   python scripts/train.py --config-name=local \
+#       +experiments=exp_in2d_out24h
+
+experiment:
+  name: "in2d_out24h"
+
+data:
+  timeseries:
+    input_start: -96
+    input_end: 0
+    target_start: 0
+    target_end: 48
