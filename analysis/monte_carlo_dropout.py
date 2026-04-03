@@ -242,7 +242,7 @@ def main(config):
     print("=" * 70)
 
     for batch_idx, data_dict in enumerate(validation_dataloader):
-        sdo = data_dict["sdo"].to(device)
+        sdo = data_dict["sdo"].to(device) if "sdo" in data_dict else None
         inputs = data_dict["inputs"].to(device)
         targets = data_dict["targets"].to(device)
         file_names = data_dict["file_names"]
@@ -250,7 +250,7 @@ def main(config):
         batch_size = len(file_names)
 
         for n in range(batch_size):
-            _sdo = sdo[n:n+1]
+            _sdo = sdo[n:n+1] if sdo is not None else None
             _input = inputs[n:n+1]
             _target = targets[n:n+1]
             file_name = file_names[n]

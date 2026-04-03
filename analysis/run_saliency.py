@@ -226,6 +226,13 @@ def main(config: DictConfig):
         print("   Some gradient operations may not work correctly.")
         print("   Consider using 'cpu' if results are abnormal.\n")
 
+    # Saliency analysis requires SDO images (convlstm or fusion models)
+    use_sdo = getattr(config.data.modalities, 'sdo', False)
+    if not use_sdo:
+        print("ERROR: Saliency analysis requires SDO image modality (convlstm/fusion models).")
+        print("       Current config has modalities.sdo=false. Exiting.")
+        return
+
     output_root = Path(output_dir)
     output_root.mkdir(exist_ok=True, parents=True)
 

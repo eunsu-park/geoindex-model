@@ -114,12 +114,13 @@ def generate_attention_analysis(
 
     # Shape info
     batch, seq_len, num_vars = solar_wind_input.shape
-    _, channels, sdo_seq_len, H, W = image_input.shape
     _, n_targets, n_target_vars = targets.shape
 
     print(f"\nInput shapes:")
     print(f"  Solar wind: {solar_wind_input.shape}")
-    print(f"  SDO images: {image_input.shape}")
+    if image_input is not None:
+        _, channels, sdo_seq_len, H, W = image_input.shape
+        print(f"  SDO images: {image_input.shape}")
     print(f"  Targets: {targets.shape}")
 
     # ================================================================
@@ -172,24 +173,27 @@ def generate_attention_analysis(
         'seq_len': seq_len,
         'num_vars': num_vars,
         'n_targets': n_targets,
-        'sdo_channels': channels,
-        'sdo_seq_len': sdo_seq_len,
-        'image_size': H,
         'd_model': config.model.d_model,
         'checkpoint': config.validation.checkpoint_path
     }
+    if image_input is not None:
+        metadata['sdo_channels'] = channels
+        metadata['sdo_seq_len'] = sdo_seq_len
+        metadata['image_size'] = H
 
     # Save
-    np.savez_compressed(
-        output_path,
-        solar_wind_data=solar_wind_input[0].cpu().numpy(),         # (seq_len, num_vars)
-        sdo_data=image_input[0].cpu().numpy(),                     # (channels, sdo_seq_len, H, W)
-        attention_weights=attention_weights_np,                     # (num_layers, num_heads, seq_len, seq_len)
-        temporal_importance=temporal_importance_all,                # (num_layers, seq_len)
-        predictions=predictions[0].cpu().numpy(),                   # (n_targets, n_target_vars)
-        targets=targets[0].cpu().numpy(),                           # (n_targets, n_target_vars)
-        metadata=metadata
-    )
+    save_dict = {
+        'solar_wind_data': solar_wind_input[0].cpu().numpy(),
+        'attention_weights': attention_weights_np,
+        'temporal_importance': temporal_importance_all,
+        'predictions': predictions[0].cpu().numpy(),
+        'targets': targets[0].cpu().numpy(),
+        'metadata': metadata,
+    }
+    if image_input is not None:
+        save_dict['sdo_data'] = image_input[0].cpu().numpy()
+
+    np.savez_compressed(output_path, **save_dict)
 
     # File size
     file_size_mb = output_path.stat().st_size / (1024**2)
@@ -387,7 +391,7 @@ def main(config: DictConfig):
         for i in range(batch_size):
             # Prepare data (single sample)
             solar_wind_input = batch["inputs"][i:i+1]
-            image_input = batch["sdo"][i:i+1]
+            image_input = batch["sdo"][i:i+1] if "sdo" in batch else None
             targets = batch["targets"][i:i+1]
 
             # Get file name for this sample
