@@ -18,7 +18,7 @@ hydra:
 # Experiment Settings
 # =============================================================================
 experiment:
-  name: "base"
+  name: "local"
   seed: 250104
   batch_size: 4
 

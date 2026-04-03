@@ -7,14 +7,6 @@ defaults:
   - optional experiments: null
 
 # =============================================================================
-# Experiment
-# experiment.name is set to "local" as fallback.
-# When using +experiments=exp_xxx, the experiment config overrides this.
-# =============================================================================
-experiment:
-  name: "local"
-
-# =============================================================================
 # Environment (GPU server with NAS mount)
 # =============================================================================
 environment:
