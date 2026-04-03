@@ -2177,16 +2177,23 @@ class TableBaseDataset(Dataset):
         return input_array.astype(np.float32), target_array.astype(np.float32)
 
 
+    @staticmethod
+    def _dt_to_name(dt) -> str:
+        """Convert numpy datetime64 to filename-safe string (YYYYMMDDHHmmSS)."""
+        ts = pd.Timestamp(dt)
+        return ts.strftime('%Y%m%d%H%M%S')
+
+
 class TableTrainDataset(TableBaseDataset):
     """Training dataset for table mode with undersampling support."""
 
     def __init__(self, config):
         super().__init__(config)
 
-        # Build file_list compatible with existing undersampling functions
-        # (datetime_str, label) tuples
+        # Build ref_dts (for slicing) and file_list (for undersampling/display)
+        self._ref_dts = [dt for dt, _ in self.train_index]
         self.file_list = [
-            (str(dt), label) for dt, label in self.train_index
+            (self._dt_to_name(dt), label) for dt, label in self.train_index
         ]
 
         self.enable_undersampling = config.sampling.enable_undersampling
@@ -2214,6 +2221,11 @@ class TableTrainDataset(TableBaseDataset):
                 f"{len(negative)} neg (sampler balances each epoch)"
             )
 
+        # Build name→datetime lookup for __getitem__
+        self._name_to_dt = {
+            self._dt_to_name(dt): dt for dt, _ in self.train_index
+        }
+
         self.num = len(self.file_list)
         logger.info(f"TableTrainDataset: {self.num} samples")
 
@@ -2221,8 +2233,8 @@ class TableTrainDataset(TableBaseDataset):
         return self.num
 
     def __getitem__(self, idx):
-        dt_str, label = self.file_list[idx]
-        ref_dt = np.datetime64(dt_str)
+        name, label = self.file_list[idx]
+        ref_dt = self._name_to_dt[name]
         input_array, target_array = self._read_and_process(ref_dt)
         label_array = np.array([[label]], dtype=np.float32)
 
@@ -2230,7 +2242,7 @@ class TableTrainDataset(TableBaseDataset):
             'inputs': torch.tensor(input_array, dtype=torch.float32),
             'targets': torch.tensor(target_array, dtype=torch.float32),
             'labels': torch.tensor(label_array, dtype=torch.float32),
-            'file_names': dt_str
+            'file_names': name
         }
 
 
@@ -2239,8 +2251,11 @@ class TableValidationDataset(TableBaseDataset):
 
     def __init__(self, config):
         super().__init__(config)
+        self._name_to_dt = {
+            self._dt_to_name(dt): dt for dt, _ in self.validation_index
+        }
         self.file_list = [
-            (str(dt), label) for dt, label in self.validation_index
+            (self._dt_to_name(dt), label) for dt, label in self.validation_index
         ]
         self.num = len(self.file_list)
         logger.info(f"TableValidationDataset: {self.num} samples")
@@ -2249,8 +2264,8 @@ class TableValidationDataset(TableBaseDataset):
         return self.num
 
     def __getitem__(self, idx):
-        dt_str, label = self.file_list[idx]
-        ref_dt = np.datetime64(dt_str)
+        name, label = self.file_list[idx]
+        ref_dt = self._name_to_dt[name]
         input_array, target_array = self._read_and_process(ref_dt)
         label_array = np.array([[label]], dtype=np.float32)
 
@@ -2258,7 +2273,7 @@ class TableValidationDataset(TableBaseDataset):
             'inputs': torch.tensor(input_array, dtype=torch.float32),
             'targets': torch.tensor(target_array, dtype=torch.float32),
             'labels': torch.tensor(label_array, dtype=torch.float32),
-            'file_names': dt_str
+            'file_names': name
         }
 
 
@@ -2277,8 +2292,11 @@ class TableTestDataset(TableBaseDataset):
                           f"using validation index")
             test_index = self.validation_index
 
+        self._name_to_dt = {
+            self._dt_to_name(dt): dt for dt, _ in test_index
+        }
         self.file_list = [
-            (str(dt), label) for dt, label in test_index
+            (self._dt_to_name(dt), label) for dt, label in test_index
         ]
         self.num = len(self.file_list)
         logger.info(f"TableTestDataset: {self.num} samples")
@@ -2287,8 +2305,8 @@ class TableTestDataset(TableBaseDataset):
         return self.num
 
     def __getitem__(self, idx):
-        dt_str, label = self.file_list[idx]
-        ref_dt = np.datetime64(dt_str)
+        name, label = self.file_list[idx]
+        ref_dt = self._name_to_dt[name]
         input_array, target_array = self._read_and_process(ref_dt)
         label_array = np.array([[label]], dtype=np.float32)
 
@@ -2296,7 +2314,7 @@ class TableTestDataset(TableBaseDataset):
             'inputs': torch.tensor(input_array, dtype=torch.float32),
             'targets': torch.tensor(target_array, dtype=torch.float32),
             'labels': torch.tensor(label_array, dtype=torch.float32),
-            'file_names': dt_str
+            'file_names': name
         }
 
 
