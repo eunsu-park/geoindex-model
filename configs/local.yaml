@@ -25,22 +25,24 @@ environment:
 # =============================================================================
 data:
   timeseries:
-    # CSV mode (default): per-file loading
-    train_dir: "train"
-    validation_dir: "validation"
     days_before: 5
     days_after: 3
 
-    # Table mode: uncomment below to switch to Parquet + index
-    # dataset_mode: "table"
-    # table_file: "data.parquet"
-    # train_index: "total/train_index.csv"
-    # validation_index: "total/validation_index.csv"
-    # test_index: "total/test_index.csv"
-    # input_start: -240
-    # input_end: 0
-    # target_start: 0
-    # target_end: 144
+    # Table mode (default): single Parquet + index, zero disk I/O per sample
+    dataset_mode: "table"
+    table_file: "data.parquet"
+    train_index: "total/train_index.csv"
+    validation_index: "total/validation_index.csv"
+    test_index: "total/test_index.csv"
+    input_start: -240
+    input_end: 0
+    target_start: 0
+    target_end: 144
+
+    # CSV mode: override via CLI if needed
+    # dataset_mode: "csv"
+    # train_dir: "train"
+    # validation_dir: "validation"
 
 # =============================================================================
 # Training (Local dev settings - fewer epochs, frequent saves)
