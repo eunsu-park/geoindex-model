@@ -1200,9 +1200,23 @@ def _get_model_dimensions(config):
     if use_csv:
         ts_cfg = config.data.timeseries
         num_input_variables = len(ts_cfg.input_variables)
-        input_sequence_length = ts_cfg.days_before * ts_cfg.points_per_day
         num_target_variables = len(ts_cfg.target_variables)
-        target_sequence_length = ts_cfg.days_after * ts_cfg.points_per_day
+        ppd = ts_cfg.points_per_day
+
+        input_start = getattr(ts_cfg, 'input_start', None)
+        input_end = getattr(ts_cfg, 'input_end', None)
+        target_start = getattr(ts_cfg, 'target_start', None)
+        target_end = getattr(ts_cfg, 'target_end', None)
+
+        if input_start is not None and input_end is not None:
+            input_sequence_length = input_end - input_start
+        else:
+            input_sequence_length = ts_cfg.days_before * ppd
+
+        if target_start is not None and target_end is not None:
+            target_sequence_length = target_end - target_start
+        else:
+            target_sequence_length = ts_cfg.days_after * ppd
     else:
         num_input_variables = len(config.data.input_variables)
         input_sequence_length = config.data.input_end_index - config.data.input_start_index
