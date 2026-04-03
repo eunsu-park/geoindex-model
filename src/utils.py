@@ -94,12 +94,18 @@ def setup_device(requested_device: str) -> torch.device:
 def setup_experiment(config) -> torch.device:
     """Combined setup for seed and device.
 
+    Sets experiment.name to "local" if not specified by an experiment config.
+
     Args:
         config: Configuration object with experiment.seed and environment.device.
 
     Returns:
         torch.device object for the selected device.
     """
+    from omegaconf import OmegaConf
+    if config.experiment.name is None:
+        OmegaConf.update(config, "experiment.name", "local")
+
     setup_seed(config.experiment.seed)
     device = setup_device(config.environment.device)
     return device
