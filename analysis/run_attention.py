@@ -244,7 +244,8 @@ def generate_attention_analysis(
 
     print(f"\nNPZ Contents:")
     print(f"  'solar_wind_data':       ({seq_len}, {num_vars})")
-    print(f"  'sdo_data':              ({channels}, {sdo_seq_len}, {H}, {W})")
+    if image_input is not None:
+        print(f"  'sdo_data':              ({channels}, {sdo_seq_len}, {H}, {W})")
     print(f"  'attention_weights':     ({num_layers}, {num_heads}, {seq_len}, {seq_len})")
     print(f"  'temporal_importance':   ({num_layers}, {seq_len})")
     print(f"  'predictions':           ({n_targets}, {n_target_vars})")
