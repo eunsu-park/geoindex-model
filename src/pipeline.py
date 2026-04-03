@@ -265,6 +265,47 @@ def get_omni_target_indices(config) -> Tuple[int, int]:
     return config.data.target_start_index, config.data.target_end_index
 
 
+def get_csv_window_indices(ts_cfg) -> Tuple[int, int, int, int]:
+    """Get CSV input/target row indices from timeseries config.
+
+    Supports two configuration methods (in priority order):
+    1. Timestep-based: input_start/input_end/target_start/target_end
+       (relative to T=0, converted to absolute row indices)
+    2. Legacy day-based: days_before/days_after
+       (input = [0, days_before*ppd), target = [days_before*ppd, total))
+
+    Args:
+        ts_cfg: config.data.timeseries section
+
+    Returns:
+        Tuple of (input_start_idx, input_end_idx,
+                  target_start_idx, target_end_idx)
+    """
+    ppd = ts_cfg.points_per_day
+    ref_idx = ts_cfg.days_before * ppd  # T=0 position in CSV
+
+    input_start = getattr(ts_cfg, 'input_start', None)
+    input_end = getattr(ts_cfg, 'input_end', None)
+    target_start = getattr(ts_cfg, 'target_start', None)
+    target_end = getattr(ts_cfg, 'target_end', None)
+
+    if input_start is not None and input_end is not None:
+        i_s = ref_idx + input_start
+        i_e = ref_idx + input_end
+    else:
+        i_s = 0
+        i_e = ref_idx
+
+    if target_start is not None and target_end is not None:
+        t_s = ref_idx + target_start
+        t_e = ref_idx + target_end
+    else:
+        t_s = ref_idx
+        t_e = ref_idx + ts_cfg.days_after * ppd
+
+    return i_s, i_e, t_s, t_e
+
+
 def get_sdo_wavelengths(config) -> List[str]:
     """Get SDO wavelengths from config."""
     if hasattr(config.data, 'sdo') and hasattr(config.data.sdo, 'wavelengths'):
@@ -1594,10 +1635,14 @@ class CSVBaseDataset(Dataset):
         self.days_before = ts_cfg.days_before
         self.days_after = ts_cfg.days_after
 
-        # Compute split indices
-        self.input_len = self.days_before * self.points_per_day
-        self.target_len = self.days_after * self.points_per_day
-        self.total_len = self.input_len + self.target_len
+        # Compute split indices (supports timestep-based windowing)
+        i_s, i_e, t_s, t_e = get_csv_window_indices(ts_cfg)
+        self.input_start_idx = i_s
+        self.input_end_idx = i_e
+        self.target_start_idx = t_s
+        self.target_end_idx = t_e
+        self.input_len = i_e - i_s
+        self.target_len = t_e - t_s
 
         # Variable lists
         self.input_variables = get_timeseries_input_variables(config)
@@ -1676,8 +1721,11 @@ class CSVBaseDataset(Dataset):
         )
 
         # Log configuration
-        logger.info(f"CSV TimeSeries mode: days_before={self.days_before}, "
-                    f"days_after={self.days_after}")
+        logger.info(f"CSV TimeSeries window: "
+                    f"input=[{self.input_start_idx}:{self.input_end_idx}] "
+                    f"({self.input_len} steps), "
+                    f"target=[{self.target_start_idx}:{self.target_end_idx}] "
+                    f"({self.target_len} steps)")
         logger.info(f"Input: {len(self.input_variables)} vars, "
                     f"{self.input_len} timesteps")
         logger.info(f"Target: {len(self.target_variables)} vars, "
@@ -1782,17 +1830,17 @@ class CSVBaseDataset(Dataset):
             )
         normalized = np.stack(normalized_cols, axis=-1)  # (T_total, V_all)
 
-        # Build input array: select input variables, first input_len timesteps
+        # Build input array: select input variables within window
         input_var_indices = [
             self.all_variables.index(v) for v in self.input_variables
         ]
-        input_array = normalized[:self.input_len, :][:, input_var_indices]
+        input_array = normalized[self.input_start_idx:self.input_end_idx, :][:, input_var_indices]
 
-        # Build target array: select target variables, last target_len timesteps
+        # Build target array: select target variables within window
         target_var_indices = [
             self.all_variables.index(v) for v in self.target_variables
         ]
-        target_array = normalized[self.input_len:, :][:, target_var_indices]
+        target_array = normalized[self.target_start_idx:self.target_end_idx, :][:, target_var_indices]
 
         return input_array.astype(np.float32), target_array.astype(np.float32)
 
@@ -1916,6 +1964,343 @@ class CSVTestDataset(CSVBaseDataset):
 
 
 # =============================================================================
+# Table-Based Dataset (Parquet + Index)
+# =============================================================================
+
+def compute_statistics_table(
+    stat_file_path: str,
+    data_array: np.ndarray,
+    row_indices: List[int],
+    input_start: int,
+    input_end: int,
+    variables: List[str],
+    overwrite: bool = False
+) -> Dict[str, Dict[str, float]]:
+    """Compute and cache normalization statistics from in-memory table.
+
+    Args:
+        stat_file_path: Path to save/load statistics pickle file
+        data_array: Full table as numpy array (N_rows, N_vars)
+        row_indices: Row indices of reference times in training split
+        input_start: Window start offset (negative, relative to ref)
+        input_end: Window end offset (positive, relative to ref)
+        variables: List of variable names (matching columns of data_array)
+        overwrite: If True, recompute even if cache exists
+
+    Returns:
+        Dictionary of statistics for each variable
+    """
+    # Try to load cached statistics
+    if os.path.exists(stat_file_path) and not overwrite:
+        try:
+            with open(stat_file_path, 'rb') as f:
+                loaded_stats = pickle.load(f)
+
+            if all(var in loaded_stats for var in variables):
+                logger.info(f"Loaded table statistics from {stat_file_path}")
+                return {var: loaded_stats[var] for var in variables}
+            else:
+                logger.info("Incomplete table statistics, recomputing...")
+        except (pickle.PickleError, KeyError) as e:
+            logger.warning(f"Failed to load table statistics: {e}, recomputing...")
+
+    if not row_indices:
+        raise ValueError("No row indices provided for statistics computation")
+
+    # Initialize online statistics per variable
+    stats_computers = {var: OnlineStatistics() for var in variables}
+
+    for count, ref_row in enumerate(row_indices):
+        window = data_array[ref_row + input_start:ref_row + input_end]
+        for j, variable in enumerate(variables):
+            stats_computers[variable].update(window[:, j])
+
+        if (count + 1) % 1000 == 0:
+            logger.info(f"Computing table statistics: "
+                        f"{count + 1}/{len(row_indices)} refs processed")
+
+    # Compile final statistics
+    stat_dict = {}
+    for variable in variables:
+        stat_dict[variable] = stats_computers[variable].get_stats()
+        logger.info(
+            f"{variable}: mean={stat_dict[variable]['mean']:.3f}, "
+            f"std={stat_dict[variable]['std']:.3f}"
+        )
+
+    # Save statistics
+    try:
+        os.makedirs(os.path.dirname(stat_file_path) or '.', exist_ok=True)
+        with open(stat_file_path, 'wb') as f:
+            pickle.dump(stat_dict, f)
+        logger.info(f"Table statistics saved to {stat_file_path}")
+    except (OSError, pickle.PickleError) as e:
+        logger.warning(f"Failed to save table statistics: {e}")
+
+    return stat_dict
+
+
+class TableBaseDataset(Dataset):
+    """Dataset backed by a single Parquet table + index files.
+
+    Loads entire table into memory (~17MB for 10 years of 30-min data).
+    Each __getitem__ call slices from the in-memory array using integer
+    offsets from the reference time — zero disk I/O per sample.
+    """
+
+    def __init__(self, config):
+        """Initialize table dataset.
+
+        Args:
+            config: Hydra configuration object with data.timeseries section
+        """
+        self.config = config
+        self.data_root = config.environment.data_root
+        ts_cfg = get_timeseries_config(config)
+
+        # Load entire table into memory
+        table_path = os.path.join(self.data_root, ts_cfg.table_file)
+        df = pd.read_parquet(table_path)
+        df['datetime'] = pd.to_datetime(df['datetime'])
+        df = df.sort_values('datetime').reset_index(drop=True)
+
+        # Variable lists
+        self.input_variables = get_timeseries_input_variables(config)
+        self.target_variables = get_timeseries_target_variables(config)
+        self.all_variables = list(dict.fromkeys(
+            self.input_variables + self.target_variables
+        ))
+
+        # Numeric array (contiguous, read-only for multi-worker safety)
+        self.array = df[self.all_variables].values.astype(np.float32)
+        self.array.flags.writeable = False
+
+        # Datetime → row index mapping
+        self.datetimes = df['datetime'].values
+        self.dt_to_row = {ts: i for i, ts in enumerate(self.datetimes)}
+
+        # Window offsets (from config)
+        self.input_start = ts_cfg.input_start
+        self.input_end = ts_cfg.input_end
+        self.target_start = ts_cfg.target_start
+        self.target_end = ts_cfg.target_end
+        self.input_len = self.input_end - self.input_start
+        self.target_len = self.target_end - self.target_start
+
+        # Load index files
+        self.train_index = self._load_index(
+            os.path.join(self.data_root, ts_cfg.train_index))
+        val_index_path = os.path.join(self.data_root, ts_cfg.validation_index)
+        self.validation_index = self._load_index(val_index_path)
+
+        # Statistics (from training portion of the table)
+        stat_path = os.path.join(self.data_root, "table_stats.pkl")
+        train_rows = [self.dt_to_row[dt] for dt, _ in self.train_index]
+        self.stat_dict = compute_statistics_table(
+            stat_file_path=stat_path,
+            data_array=self.array,
+            row_indices=train_rows,
+            input_start=self.input_start,
+            input_end=self.target_end,
+            variables=self.all_variables,
+            overwrite=False
+        )
+
+        # Normalizer
+        norm_config = get_timeseries_normalization_config(config)
+        self.normalizer = Normalizer(
+            stat_dict=self.stat_dict,
+            method_config=norm_config
+        )
+
+        # Pre-compute variable index lookups
+        self._input_var_idx = [
+            self.all_variables.index(v) for v in self.input_variables
+        ]
+        self._target_var_idx = [
+            self.all_variables.index(v) for v in self.target_variables
+        ]
+
+        logger.info(f"Table mode: {len(self.array)} rows loaded from {table_path}, "
+                    f"input=[T{self.input_start:+d}:T{self.input_end:+d}] "
+                    f"({self.input_len} steps), "
+                    f"target=[T{self.target_start:+d}:T{self.target_end:+d}] "
+                    f"({self.target_len} steps)")
+
+    def _load_index(self, path: str) -> List[Tuple]:
+        """Load index CSV → list of (numpy.datetime64, label) tuples.
+
+        Args:
+            path: Path to index CSV file (columns: datetime, label)
+
+        Returns:
+            List of (datetime64, label) tuples
+        """
+        df = pd.read_csv(path)
+        df['datetime'] = pd.to_datetime(df['datetime'])
+        labels = (df['label'].values if 'label' in df.columns
+                  else np.zeros(len(df), dtype=int))
+        return [(np.datetime64(dt), int(lbl))
+                for dt, lbl in zip(df['datetime'].values, labels)]
+
+    def _read_and_process(self, ref_dt) -> Tuple[np.ndarray, np.ndarray]:
+        """Slice and normalize input/target from in-memory array.
+
+        Args:
+            ref_dt: Reference time (numpy.datetime64)
+
+        Returns:
+            Tuple of (input_array, target_array)
+        """
+        ref_row = self.dt_to_row[ref_dt]
+
+        # Slice from in-memory array
+        raw_input = self.array[ref_row + self.input_start:ref_row + self.input_end]
+        raw_target = self.array[ref_row + self.target_start:ref_row + self.target_end]
+
+        # Normalize input variables
+        input_cols = []
+        for j in self._input_var_idx:
+            input_cols.append(
+                self.normalizer.normalize_omni(raw_input[:, j],
+                                               self.all_variables[j]))
+        input_array = np.stack(input_cols, axis=-1)
+
+        # Normalize target variables
+        target_cols = []
+        for j in self._target_var_idx:
+            target_cols.append(
+                self.normalizer.normalize_omni(raw_target[:, j],
+                                               self.all_variables[j]))
+        target_array = np.stack(target_cols, axis=-1)
+
+        return input_array.astype(np.float32), target_array.astype(np.float32)
+
+
+class TableTrainDataset(TableBaseDataset):
+    """Training dataset for table mode with undersampling support."""
+
+    def __init__(self, config):
+        super().__init__(config)
+
+        # Build file_list compatible with existing undersampling functions
+        # (datetime_str, label) tuples
+        self.file_list = [
+            (str(dt), label) for dt, label in self.train_index
+        ]
+
+        self.enable_undersampling = config.sampling.enable_undersampling
+        self.undersampling_mode = getattr(
+            config.sampling, 'undersampling_mode', 'static'
+        )
+
+        if self.enable_undersampling and self.undersampling_mode == 'static':
+            seed = config.experiment.seed
+            subsample, num_pos, num_neg = undersample(
+                self.file_list,
+                num_subsample=config.sampling.num_subsamples,
+                subsample_index=config.sampling.subsample_index,
+                seed=seed
+            )
+            self.file_list = subsample
+            logger.info(
+                f"Table static undersampling: {num_pos} pos, {num_neg} neg, "
+                f"fold {config.sampling.subsample_index}/{config.sampling.num_subsamples}"
+            )
+        elif self.enable_undersampling and self.undersampling_mode == 'dynamic':
+            positive, negative = split_by_class(self.file_list)
+            logger.info(
+                f"Table dynamic undersampling: {len(positive)} pos, "
+                f"{len(negative)} neg (sampler balances each epoch)"
+            )
+
+        self.num = len(self.file_list)
+        logger.info(f"TableTrainDataset: {self.num} samples")
+
+    def __len__(self):
+        return self.num
+
+    def __getitem__(self, idx):
+        dt_str, label = self.file_list[idx]
+        ref_dt = np.datetime64(dt_str)
+        input_array, target_array = self._read_and_process(ref_dt)
+        label_array = np.array([[label]], dtype=np.float32)
+
+        return {
+            'inputs': torch.tensor(input_array, dtype=torch.float32),
+            'targets': torch.tensor(target_array, dtype=torch.float32),
+            'labels': torch.tensor(label_array, dtype=torch.float32),
+            'file_names': dt_str
+        }
+
+
+class TableValidationDataset(TableBaseDataset):
+    """Validation dataset for table mode."""
+
+    def __init__(self, config):
+        super().__init__(config)
+        self.file_list = [
+            (str(dt), label) for dt, label in self.validation_index
+        ]
+        self.num = len(self.file_list)
+        logger.info(f"TableValidationDataset: {self.num} samples")
+
+    def __len__(self):
+        return self.num
+
+    def __getitem__(self, idx):
+        dt_str, label = self.file_list[idx]
+        ref_dt = np.datetime64(dt_str)
+        input_array, target_array = self._read_and_process(ref_dt)
+        label_array = np.array([[label]], dtype=np.float32)
+
+        return {
+            'inputs': torch.tensor(input_array, dtype=torch.float32),
+            'targets': torch.tensor(target_array, dtype=torch.float32),
+            'labels': torch.tensor(label_array, dtype=torch.float32),
+            'file_names': dt_str
+        }
+
+
+class TableTestDataset(TableBaseDataset):
+    """Test dataset for table mode."""
+
+    def __init__(self, config):
+        super().__init__(config)
+        ts_cfg = get_timeseries_config(config)
+
+        test_index_path = os.path.join(self.data_root, ts_cfg.test_index)
+        if os.path.exists(test_index_path):
+            test_index = self._load_index(test_index_path)
+        else:
+            logger.warning(f"Test index not found at {test_index_path}, "
+                          f"using validation index")
+            test_index = self.validation_index
+
+        self.file_list = [
+            (str(dt), label) for dt, label in test_index
+        ]
+        self.num = len(self.file_list)
+        logger.info(f"TableTestDataset: {self.num} samples")
+
+    def __len__(self):
+        return self.num
+
+    def __getitem__(self, idx):
+        dt_str, label = self.file_list[idx]
+        ref_dt = np.datetime64(dt_str)
+        input_array, target_array = self._read_and_process(ref_dt)
+        label_array = np.array([[label]], dtype=np.float32)
+
+        return {
+            'inputs': torch.tensor(input_array, dtype=torch.float32),
+            'targets': torch.tensor(target_array, dtype=torch.float32),
+            'labels': torch.tensor(label_array, dtype=torch.float32),
+            'file_names': dt_str
+        }
+
+
+# =============================================================================
 # DataLoader Creation
 # =============================================================================
 
@@ -1935,7 +2320,20 @@ def create_dataloader(config, phase: str = "train") -> DataLoader:
     use_csv = is_timeseries_mode(config)
 
     if use_csv:
-        if phase == "TRAIN":
+        dataset_mode = getattr(
+            get_timeseries_config(config), 'dataset_mode', 'csv')
+
+        if dataset_mode == 'table':
+            # Table mode: single Parquet + index files
+            if phase == "TRAIN":
+                dataset = TableTrainDataset(config)
+            elif phase == "VALIDATION":
+                dataset = TableValidationDataset(config)
+            elif phase == "TEST":
+                dataset = TableTestDataset(config)
+            else:
+                raise ValueError(f"Invalid phase for table mode: {phase}")
+        elif phase == "TRAIN":
             dataset = CSVTrainDataset(config)
         elif phase == "VALIDATION":
             dataset = CSVValidationDataset(config)
@@ -2016,14 +2414,25 @@ def verify_pipeline(config) -> None:
 
     if use_csv:
         ts_cfg = get_timeseries_config(config)
-        print(f"\n[CSV TimeSeries Configuration]")
-        print(f"Dataset dir: {ts_cfg.dataset_dir}")
+        dataset_mode = getattr(ts_cfg, 'dataset_mode', 'csv')
+        print(f"\n[TimeSeries Configuration] (mode: {dataset_mode})")
         print(f"Interval: {ts_cfg.interval_minutes} min")
         print(f"Points per day: {ts_cfg.points_per_day}")
         print(f"Days before: {ts_cfg.days_before} ({ts_cfg.days_before * ts_cfg.points_per_day} timesteps)")
         print(f"Days after: {ts_cfg.days_after} ({ts_cfg.days_after * ts_cfg.points_per_day} timesteps)")
+        i_s, i_e, t_s, t_e = get_csv_window_indices(ts_cfg)
+        print(f"Window indices: input=[{i_s}:{i_e}] ({i_e - i_s} steps), "
+              f"target=[{t_s}:{t_e}] ({t_e - t_s} steps)")
         print(f"Input variables: {len(get_timeseries_input_variables(config))}")
         print(f"Target variables: {get_timeseries_target_variables(config)}")
+        if dataset_mode == 'table':
+            print(f"\n[Table Mode]")
+            print(f"Table file: {ts_cfg.table_file}")
+            print(f"Train index: {ts_cfg.train_index}")
+            print(f"Validation index: {ts_cfg.validation_index}")
+            print(f"Test index: {ts_cfg.test_index}")
+        else:
+            print(f"Dataset dir: {ts_cfg.dataset_dir}")
     else:
         # Legacy HDF5 mode
         print("\n[Day-based Configuration]")
