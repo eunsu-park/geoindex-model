@@ -4,9 +4,12 @@
 defaults:
   - base
   - _self_
+  - optional experiments: null
 
 # =============================================================================
-# Experiment (Override)
+# Experiment
+# experiment.name is set to "local" as fallback.
+# When using +experiments=exp_xxx, the experiment config overrides this.
 # =============================================================================
 experiment:
   name: "local"

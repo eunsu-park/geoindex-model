@@ -3,7 +3,7 @@
 #
 # Usage:
 #   python scripts/train.py --config-name=local \
-#       +experiments=exp_in1d_out24h
+#       experiments=exp_in1d_out24h
 
 experiment:
   name: "in1d_out24h"
