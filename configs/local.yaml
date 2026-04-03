@@ -4,7 +4,6 @@
 defaults:
   - base
   - _self_
-  - optional experiments: null
 
 # =============================================================================
 # Environment (GPU server with NAS mount)

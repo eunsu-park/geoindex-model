@@ -1,0 +1,16 @@
+# Experiment: 1-day input, 12-hour output
+# Usage: python scripts/train.py --config-name=in1d_out12h
+
+defaults:
+  - local
+  - _self_
+
+experiment:
+  name: "in1d_out12h"
+
+data:
+  timeseries:
+    input_start: -48
+    input_end: 0
+    target_start: 0
+    target_end: 24
