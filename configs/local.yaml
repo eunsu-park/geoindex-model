@@ -1,4 +1,4 @@
-# Local Development Configuration (macOS with MPS)
+# Local Development Configuration (GPU server with NAS mount)
 # Inherits from base.yaml and overrides environment-specific settings.
 
 defaults:
@@ -12,12 +12,12 @@ experiment:
   name: "local"
 
 # =============================================================================
-# Environment (Local macOS)
+# Environment (GPU server with NAS mount)
 # =============================================================================
 environment:
   device: "cuda"
-  data_root: "/home/eunsupark/Projects/ap/dataset"
-  save_root: "/home/eunsupark/Projects/ap/results"
+  data_root: "/opt/nas/ap_share/dataset"
+  save_root: "/opt/nas/ap_share/results"
   num_workers: 8
 
 # =============================================================================
@@ -33,10 +33,10 @@ data:
 
     # Table mode: uncomment below to switch to Parquet + index
     # dataset_mode: "table"
-    # table_file: "sw_30min.parquet"
-    # train_index: "train_index.csv"
-    # validation_index: "validation_index.csv"
-    # test_index: "test_index.csv"
+    # table_file: "data.parquet"
+    # train_index: "total/train_index.csv"
+    # validation_index: "total/validation_index.csv"
+    # test_index: "total/test_index.csv"
     # input_start: -240
     # input_end: 0
     # target_start: 0
