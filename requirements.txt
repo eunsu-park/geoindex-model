@@ -8,4 +8,5 @@ omegaconf
 opencv-python
 pyyaml
 tqdm
+pyarrow
 pytest
