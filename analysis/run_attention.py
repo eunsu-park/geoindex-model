@@ -268,7 +268,7 @@ def generate_attention_analysis(
     }
 
 
-@hydra.main(config_path="../configs", config_name="local", version_base=None)
+@hydra.main(config_path="../configs", version_base=None)
 def main(config: DictConfig):
     """Main execution function."""
 

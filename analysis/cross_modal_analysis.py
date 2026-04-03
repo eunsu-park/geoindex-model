@@ -280,7 +280,7 @@ def load_model_and_data(cfg: DictConfig) -> Tuple[nn.Module, torch.utils.data.Da
     return model, val_loader
 
 
-@hydra.main(version_base=None, config_path="../configs", config_name="local")
+@hydra.main(version_base=None, config_path="../configs")
 def main(cfg: DictConfig):
     """Main entry point."""
 

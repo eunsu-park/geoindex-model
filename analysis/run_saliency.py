@@ -204,7 +204,7 @@ def process_batch(
         print(f"  Error: {e}")
 
 
-@hydra.main(config_path="../configs", config_name="local", version_base=None)
+@hydra.main(config_path="../configs", version_base=None)
 def main(config: DictConfig):
     """Main execution function."""
 
