@@ -228,9 +228,17 @@ def main(config):
             dropout_count += 1
     print(f"Enabled {dropout_count} Dropout layers for MC sampling")
 
-    # Get variable names
-    target_variable = config.data.target_variables[0] if hasattr(config.data, 'target_variables') else 'ap_index_nt'
-    input_variables = list(config.data.input_variables) if hasattr(config.data, 'input_variables') else []
+    # Get variable names (CSV/Table mode first, then legacy OMNI fallback)
+    use_csv = getattr(config.data.modalities, 'timeseries', False)
+    if use_csv:
+        target_variable = list(config.data.timeseries.target_variables)[0]
+        input_variables = list(config.data.timeseries.input_variables)
+    elif hasattr(config.data, 'target_variables'):
+        target_variable = config.data.target_variables[0]
+        input_variables = list(config.data.input_variables) if hasattr(config.data, 'input_variables') else []
+    else:
+        target_variable = 'ap_index_nt'
+        input_variables = []
 
     # Process all batches
     total_processed = 0
