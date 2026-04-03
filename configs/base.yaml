@@ -95,6 +95,27 @@ data:
     days_before: 5                # Input window (default: 5 days = 240 timesteps)
     days_after: 3                 # Target window (default: 3 days = 144 timesteps)
 
+    # --- Dataset mode ---
+    # "csv": per-file CSV loading (default, backward compatible)
+    # "table": single Parquet file + index CSV (zero disk I/O per sample)
+    dataset_mode: "csv"
+
+    # --- Table mode settings (only used when dataset_mode="table") ---
+    table_file: "sw_30min.parquet"
+    train_index: "train_index.csv"
+    validation_index: "validation_index.csv"
+    test_index: "test_index.csv"
+
+    # --- Timestep-based window offsets relative to T=0 ---
+    # T=0 is at row (days_before * points_per_day) in CSV files.
+    # Negative = before T, Positive = after T.
+    # If null, falls back to days_before/days_after behavior.
+    # Required when dataset_mode="table".
+    input_start: null             # e.g., -48 (d-1), -96 (d-2), -144 (d-3)
+    input_end: null               # e.g., 0 (T=0)
+    target_start: null            # e.g., 0
+    target_end: null              # e.g., 24 (12h), 48 (24h)
+
     # Input variables (21 solar wind + 2 geomagnetic = 23 total)
     # Each physical quantity has avg/min/max triplet from 30-min aggregation
     input_variables:
