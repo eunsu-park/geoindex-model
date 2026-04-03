@@ -176,7 +176,8 @@ class PositionalEncoding(nn.Module):
         self.register_buffer('pe', pe)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = x + self.pe[:x.size(0), :]
+        # x shape: (batch, seq_len, d_model) with batch_first=True
+        x = x + self.pe[:x.size(1), :].transpose(0, 1)
         return self.dropout(x)
 
 
