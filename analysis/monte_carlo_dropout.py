@@ -40,7 +40,7 @@ import matplotlib.pyplot as plt
 # Custom library
 from src.pipeline import create_dataloader
 from src.networks import create_model
-from src.utils import setup_experiment, resolve_paths
+from src.utils import setup_experiment, resolve_paths, create_local_output_dir, compress_and_move
 
 
 def create_mcd_plot(
@@ -169,14 +169,16 @@ def main(config):
     device = setup_experiment(config)
 
     # Resolve paths (epoch-based or explicit)
-    checkpoint_path, output_dir = resolve_paths(config, 'mcd')
+    checkpoint_path, nas_output_dir = resolve_paths(config, 'mcd')
 
-    # Update config with resolved paths
+    # Write to local temp first, then compress and move to NAS
+    local_dir = create_local_output_dir(
+        nas_output_dir, config.experiment.name, 'mcd')
+    output_dir = local_dir
+
+    # Update config with local paths
     OmegaConf.update(config, "mcd.checkpoint_path", checkpoint_path)
-    OmegaConf.update(config, "mcd.output_dir", output_dir)
-
-    output_dir = Path(output_dir)
-    output_dir.mkdir(exist_ok=True, parents=True)
+    OmegaConf.update(config, "mcd.output_dir", str(output_dir))
 
     # Get settings from config
     n_samples = getattr(config.mcd, 'num_mc_samples', 100)
@@ -380,6 +382,9 @@ def main(config):
         elif avg_coverage > expected + 10:
             print("\n  NOTE: Coverage is higher than expected.")
             print("  This may indicate overestimated uncertainty (conservative).")
+
+    # Compress and move to NAS
+    compress_and_move(local_dir, nas_output_dir)
 
 
 if __name__ == "__main__":

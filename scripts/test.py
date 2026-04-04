@@ -27,7 +27,7 @@ from omegaconf import OmegaConf
 # Add parent directory to path for src imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.utils import setup_experiment, resolve_paths
+from src.utils import setup_experiment, resolve_paths, create_local_output_dir, compress_and_move
 from src.pipeline import create_dataloader
 from src.networks import create_model
 from src.testers import Tester
@@ -51,13 +51,16 @@ def main(config):
     device = setup_experiment(config)
 
     # Resolve paths (epoch-based or explicit)
-    checkpoint_path, output_dir = resolve_paths(config, 'test')
+    checkpoint_path, nas_output_dir = resolve_paths(config, 'test')
 
-    # Update config with resolved paths (for Tester to use)
+    # Write to local temp first, then compress and move to NAS
+    local_dir = create_local_output_dir(
+        nas_output_dir, config.experiment.name, 'test')
+    output_dir = str(local_dir)
+
+    # Update config with local paths (for Tester to use)
     OmegaConf.update(config, "test.checkpoint_path", checkpoint_path)
     OmegaConf.update(config, "test.output_dir", output_dir)
-
-    os.makedirs(output_dir, exist_ok=True)
 
     # Print configuration summary
     model_type = config.model.model_type
@@ -107,10 +110,11 @@ def main(config):
     logging.info("=" * 80)
     logging.info(f"Model Type: {model_type}")
     logging.info(f"Total Samples: {results['total_samples']}")
-    logging.info(f"Results saved to: {results['output_directory']}")
     logging.info("=" * 80)
 
-    print("Inference completed successfully")
+    # Compress and move to NAS
+    compress_and_move(local_dir, nas_output_dir)
+    logging.info(f"Results saved to: {nas_output_dir}")
 
     return results
 

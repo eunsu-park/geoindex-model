@@ -50,7 +50,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from src.networks import create_model
 from src.pipeline import create_dataloader
-from src.utils import resolve_paths
+from src.utils import resolve_paths, create_local_output_dir, compress_and_move
 from analysis.attention_analysis import AttentionExtractor
 
 
@@ -304,14 +304,16 @@ def main(config: DictConfig):
     device = config.environment.device
 
     # Resolve paths (epoch-based or explicit)
-    checkpoint_path, output_dir_str = resolve_paths(config, 'attention')
+    checkpoint_path, nas_output_dir = resolve_paths(config, 'attention')
 
-    # Update config with resolved paths
+    # Write to local temp first, then compress and move to NAS
+    local_dir = create_local_output_dir(
+        nas_output_dir, config.experiment.name, 'attention')
+    output_dir = local_dir
+
+    # Update config with local paths
     OmegaConf.update(config, "attention.checkpoint_path", checkpoint_path)
-    OmegaConf.update(config, "attention.output_dir", output_dir_str)
-
-    output_dir = Path(output_dir_str)
-    output_dir.mkdir(exist_ok=True, parents=True)
+    OmegaConf.update(config, "attention.output_dir", str(output_dir))
 
     # Get create_plots setting (need this before creating directories)
     create_plots = getattr(config.attention, 'create_plots', False) if hasattr(config, 'attention') else False
@@ -521,6 +523,9 @@ print(f"MSE: {mse:.4f}")
    - Positive predictions: Uniform attention (progressive process)
    - Negative predictions: Early-focused attention
     """)
+
+    # Compress and move to NAS
+    compress_and_move(local_dir, nas_output_dir)
 
 
 if __name__ == '__main__':

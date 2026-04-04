@@ -27,7 +27,7 @@ from omegaconf import OmegaConf
 # Add parent directory to path for src imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.utils import setup_experiment, resolve_paths
+from src.utils import setup_experiment, resolve_paths, create_local_output_dir, compress_and_move
 from src.pipeline import create_dataloader
 from src.networks import create_model
 from src.validators import Validator
@@ -44,13 +44,16 @@ def main(config):
     device = setup_experiment(config)
 
     # Resolve paths (epoch-based or explicit)
-    checkpoint_path, output_dir = resolve_paths(config, 'validation')
+    checkpoint_path, nas_output_dir = resolve_paths(config, 'validation')
 
-    # Update config with resolved paths (for Validator to use)
+    # Write to local temp first, then compress and move to NAS
+    local_dir = create_local_output_dir(
+        nas_output_dir, config.experiment.name, 'validation')
+    output_dir = str(local_dir)
+
+    # Update config with local paths (for Validator to use)
     OmegaConf.update(config, "validation.checkpoint_path", checkpoint_path)
     OmegaConf.update(config, "validation.output_dir", output_dir)
-
-    os.makedirs(output_dir, exist_ok=True)
 
     logger = None
 
@@ -114,10 +117,11 @@ def main(config):
         print(f"Average Cosine Similarity: {results['overall']['average_cosine_sim']:.4f}")
 
     print(f"\nSuccess Rate: {results['success_rate']:.1f}%")
-    print(f"Results saved to: {results['output_directory']}")
     print("=" * 80 + "\n")
 
-    print("Validation completed successfully")
+    # Compress and move to NAS
+    compress_and_move(local_dir, nas_output_dir)
+    print(f"Results saved to: {nas_output_dir}")
 
     return results
 

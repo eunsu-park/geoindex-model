@@ -37,7 +37,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from src.networks import create_model
 from src.pipeline import create_dataloader
-from src.utils import resolve_paths
+from src.utils import resolve_paths, create_local_output_dir, compress_and_move
 from analysis.saliency_maps import SaliencyExtractor
 
 
@@ -214,11 +214,15 @@ def main(config: DictConfig):
     device = config.environment.device
 
     # Resolve paths (epoch-based or explicit)
-    checkpoint_path, output_dir = resolve_paths(config, 'saliency')
+    checkpoint_path, nas_output_dir = resolve_paths(config, 'saliency')
 
-    # Update config with resolved paths
+    # Write to local temp first, then compress and move to NAS
+    local_dir = create_local_output_dir(
+        nas_output_dir, config.experiment.name, 'saliency')
+
+    # Update config with local paths
     OmegaConf.update(config, "saliency.checkpoint_path", checkpoint_path)
-    OmegaConf.update(config, "saliency.output_dir", output_dir)
+    OmegaConf.update(config, "saliency.output_dir", str(local_dir))
 
     # MPS warning
     if device == "mps":
@@ -233,8 +237,7 @@ def main(config: DictConfig):
         print("       Current config has modalities.sdo=false. Exiting.")
         return
 
-    output_root = Path(output_dir)
-    output_root.mkdir(exist_ok=True, parents=True)
+    output_root = local_dir
 
     print("=" * 70)
     print("SALIENCY ANALYSIS - ALL BATCHES MODE")
@@ -396,6 +399,9 @@ def main(config: DictConfig):
     print("    ├─ channel_comparison.png")
     print("    ├─ temporal_importance_all_channels.png")
     print("    └─ channel_importance.npz")
+
+    # Compress and move to NAS
+    compress_and_move(local_dir, nas_output_dir)
 
 
 if __name__ == '__main__':

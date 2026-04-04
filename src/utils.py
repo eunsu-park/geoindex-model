@@ -22,6 +22,8 @@ Example:
 import os
 import random
 import logging
+import shutil
+from pathlib import Path
 from typing import List, Optional
 
 import numpy as np
@@ -264,6 +266,67 @@ def resolve_paths(config, phase: str) -> tuple:
         )
 
     return checkpoint_path, output_dir
+
+
+def create_local_output_dir(
+    nas_output_dir: str, experiment_name: str, phase: str
+) -> Path:
+    """Create local temp directory for analysis output.
+
+    Writes go to local disk first (fast I/O), then compress_and_move()
+    archives the result to NAS. This avoids creating many small files
+    directly on network storage.
+
+    Args:
+        nas_output_dir: Original NAS output path (used to derive subdir name).
+        experiment_name: Experiment name for directory structure.
+        phase: Analysis phase name (validation, test, mcd, attention, saliency).
+
+    Returns:
+        Path to local temp directory.
+    """
+    nas_path = Path(nas_output_dir)
+    local_dir = Path.home() / "tmp" / experiment_name / phase / nas_path.name
+    local_dir.mkdir(parents=True, exist_ok=True)
+    return local_dir
+
+
+def compress_and_move(
+    local_dir: Path, nas_output_dir: str, cleanup: bool = True
+):
+    """Compress local output directory to zip and move to NAS.
+
+    Equivalent to: cd <parent> && zip -r <name>.zip <name>
+
+    Args:
+        local_dir: Local temp directory containing results.
+        nas_output_dir: Target NAS directory path.
+        cleanup: If True, delete local temp directory after move.
+    """
+    nas_path = Path(nas_output_dir)
+    nas_path.parent.mkdir(parents=True, exist_ok=True)
+
+    archive_name = f"{local_dir.name}.zip"
+    archive_local = local_dir.parent / archive_name
+
+    print(f"Compressing {local_dir} → {archive_local}")
+    shutil.make_archive(
+        str(archive_local.with_suffix('')),
+        'zip',
+        root_dir=str(local_dir.parent),
+        base_dir=local_dir.name
+    )
+
+    file_size_mb = archive_local.stat().st_size / (1024 ** 2)
+    print(f"Archive size: {file_size_mb:.1f} MB")
+
+    archive_dest = nas_path.parent / archive_name
+    shutil.move(str(archive_local), str(archive_dest))
+    print(f"Moved to: {archive_dest}")
+
+    if cleanup:
+        shutil.rmtree(local_dir)
+        print(f"Cleaned up: {local_dir}")
 
 
 def save_plot(targets: np.ndarray, outputs: np.ndarray,
