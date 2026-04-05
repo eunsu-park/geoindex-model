@@ -858,17 +858,8 @@ class Trainer:
         epoch_summary = self.metrics_tracker.get_epoch_summary()
         epoch_metrics = {key: stats['mean'] for key, stats in epoch_summary.items()}
 
-        # Learning rate scheduling
-        # 스케줄러 타입에 따라 step() 호출 방식이 다름
-        if self.scheduler:
-            if self.scheduler_type == "cosine_annealing":
-                # CosineAnnealingWarmRestarts: epoch 번호로 step
-                # (에포크 단위로 LR 감소, 주기적 재시작)
-                self.scheduler.step(self.current_epoch)
-            else:
-                # ReduceLROnPlateau: loss 값으로 step
-                # (loss 정체 시 LR 감소)
-                self.scheduler.step(epoch_metrics.get('loss', 0))
+        # NOTE: LR scheduler stepping moved to fit() method
+        # to use val_loss (selection_loss) for ReduceOnPlateau.
 
         # Log epoch summary
         self.log_epoch_summary(epoch_metrics, time.time() - epoch_start_time)
@@ -1007,6 +998,14 @@ class Trainer:
 
             # Use validation loss for best model selection if available
             selection_loss = epoch_metrics.get('val_loss', epoch_metrics.get('loss', 0))
+
+            # Learning rate scheduling (uses val_loss via selection_loss)
+            if self.scheduler:
+                if self.scheduler_type == "cosine_annealing":
+                    self.scheduler.step(epoch + 1)
+                else:
+                    # ReduceLROnPlateau: step with val_loss (or train_loss fallback)
+                    self.scheduler.step(selection_loss)
 
             # Save best model
             self.checkpoint_manager.save_if_best(
