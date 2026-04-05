@@ -1888,6 +1888,16 @@ class CSVTrainDataset(CSVBaseDataset):
     def __getitem__(self, idx):
         file_name, label = self.file_list[idx]
         input_array, target_array = self._read_and_process(file_name, phase="train")
+
+        # Data augmentation (training only)
+        noise_std = getattr(
+            self.config.data.timeseries.augmentation, 'gaussian_noise_std', 0.0
+        )
+        if noise_std > 0:
+            input_array = input_array + np.random.normal(
+                0, noise_std, input_array.shape
+            ).astype(np.float32)
+
         label_array = np.array([[label]], dtype=np.float32)
 
         return {
@@ -2236,6 +2246,16 @@ class TableTrainDataset(TableBaseDataset):
         name, label = self.file_list[idx]
         ref_dt = self._name_to_dt[name]
         input_array, target_array = self._read_and_process(ref_dt)
+
+        # Data augmentation (training only)
+        noise_std = getattr(
+            self.config.data.timeseries.augmentation, 'gaussian_noise_std', 0.0
+        )
+        if noise_std > 0:
+            input_array = input_array + np.random.normal(
+                0, noise_std, input_array.shape
+            ).astype(np.float32)
+
         label_array = np.array([[label]], dtype=np.float32)
 
         return {

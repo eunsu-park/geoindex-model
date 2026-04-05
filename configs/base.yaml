@@ -143,6 +143,10 @@ data:
       - "ap30"
       - "hp30"
 
+    # Data augmentation (training only)
+    augmentation:
+      gaussian_noise_std: 0.0       # Std of Gaussian noise added to normalized inputs (0=disabled)
+
     # Target variable(s) for regression
     target_variables:
       - "ap30"
