@@ -1,0 +1,16 @@
+# Experiment B2: Best Phase A config + Gaussian noise augmentation
+# Goal: Prevent memorization via input noise perturbation
+# Usage: python scripts/train.py --config-name=in2d_out24h_B2
+# Prerequisite: Phase A best config determined (defaults to A3)
+
+defaults:
+  - in2d_out24h_A3
+  - _self_
+
+experiment:
+  name: "in2d_out24h_B2_augmentation"
+
+data:
+  timeseries:
+    augmentation:
+      gaussian_noise_std: 0.05

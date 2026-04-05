@@ -1,0 +1,19 @@
+# Experiment A5: Low learning rate + cosine annealing
+# Goal: Slower learning to capture generalization patterns
+# Usage: python scripts/train.py --config-name=in2d_out24h_A5
+
+defaults:
+  - in2d_out24h
+  - _self_
+
+experiment:
+  name: "in2d_out24h_A5_low_lr"
+
+training:
+  learning_rate: 5.0e-5
+  weight_decay: 0.01
+  scheduler_type: "cosine_annealing"
+  epochs: 60
+
+model:
+  transformer_dropout: 0.2
