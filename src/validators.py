@@ -727,7 +727,7 @@ class Validator:
         file_names: List[str],
         npz_dir: Path
     ):
-        """Save NPZ files for each sample.
+        """Save NPZ files for each sample (denormalized to original scale).
 
         Args:
             batch_result: Batch validation results.
@@ -742,11 +742,29 @@ class Validator:
             file_name_base = os.path.splitext(file_name)[0]
             npz_path = npz_dir / f"{file_name_base}.npz"
 
+            inp = inputs[i].copy()
+            tgt = targets[i].copy()
+            pred = predictions[i].copy()
+
+            # Denormalize to original scale
+            if self.normalizer is not None:
+                for var_idx, var_name in enumerate(self.input_variables):
+                    inp[:, var_idx] = self.normalizer.denormalize_omni(
+                        inp[:, var_idx], var_name
+                    )
+                for var_idx, var_name in enumerate(self.target_variables):
+                    tgt[:, var_idx] = self.normalizer.denormalize_omni(
+                        tgt[:, var_idx], var_name
+                    )
+                    pred[:, var_idx] = self.normalizer.denormalize_omni(
+                        pred[:, var_idx], var_name
+                    )
+
             np.savez_compressed(
                 npz_path,
-                inputs=inputs[i],
-                targets=targets[i],
-                predictions=predictions[i],
+                inputs=inp,
+                targets=tgt,
+                predictions=pred,
                 input_variables=self.input_variables,
                 target_variables=self.target_variables
             )
