@@ -145,6 +145,31 @@ Epoch | Train Loss | Val Loss   | Gap       | Train MAE | Val MAE
 - [ ] SolarWindWeightedLoss의 고 ap30 구간 가중치 조정
 - [ ] 폭풍 이벤트 별도 평가 메트릭 추가 (ap30 ≥ 30 구간 MAE/RMSE)
 
+### 우선순위 4: ap30 이산값 매핑
+
+ap30은 연속 실수가 아닌 28개 이산값(준로그 스케일)만 존재하나, 모델은 실수를 출력한다.
+
+```
+유효 ap30 값: 0, 2, 3, 4, 5, 6, 7, 9, 12, 15, 18, 22, 27, 32, 39, 48, 56, 67, 80, 94, 111, 132, 154, 179, 207, 236, 300, 400
+```
+
+현재 log1p_zscore 정규화 → 역변환 `exp(...) - 1`이 양수를 보장하므로 음수 문제는 없음. 핵심은 이산값 매핑.
+
+**단계별 접근:**
+
+1. **후처리: Snap to nearest valid ap30** (코드 수정 최소, 모델 재훈련 불필요)
+   - [ ] validation/inference 후처리로 가장 가까운 유효 ap30 값에 매핑
+   - 단순 반올림보다 정확 (예: 10.3 → 반올림=10(무효), snap=9 또는 12(유효))
+   - 저활동 구간(0, 2, 3)에서 메트릭 소폭 개선 기대
+
+2. **모델 구조: Ordinal classification + regression hybrid** (과적합 해결 후 검토)
+   - [ ] 회귀 head 유지 + 28개 클래스 분류 head 추가
+   - 최종 출력: 분류 확률 가중 평균 또는 분류 결과로 snap
+   - ap30의 이산 구조를 모델에 직접 주입
+
+3. **출력 활성화 함수** (우선순위 낮음)
+   - [ ] Softplus 등으로 출력 하한 제한 — 현재 log1p_zscore가 이미 양수 보장하므로 실질적 이득 작음
+
 ### 기타
 
 - [x] 입력 길이: 2일이 최적으로 확인됨, 향후 실험은 in2d 기반 진행
@@ -189,3 +214,4 @@ in2d_out24h 기반. 성공 기준: best epoch ≥ 8, train-val gap < 0.10, val_l
 | 2025-04-05 | 24h 과적합 해결 실험 계획 수립 (A1~A5, B1~B2) |
 | 2025-04-05 | B1: ReduceOnPlateau 스케줄러 버그 수정 (train_loss→val_loss) |
 | 2025-04-05 | B2: Gaussian noise augmentation 구현 (pipeline.py + base.yaml) |
+| 2025-04-05 | 우선순위 4 추가: ap30 이산값 매핑 (snap 후처리 → ordinal classification 단계별) |
