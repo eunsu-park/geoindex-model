@@ -252,6 +252,9 @@ class Tester:
         self.save_npz = getattr(config.test, 'save_npz', True)
         self.save_plots = getattr(config.test, 'save_plots', True)
 
+        # Normalizer (set in test() from dataloader)
+        self.normalizer = None
+
         # Get variable lists
         self._setup_variable_info()
 
@@ -308,6 +311,10 @@ class Tester:
         """
         logging.info(f"Running inference (model_type: {self.model_type})...")
 
+        # Store normalizer for denormalization
+        if hasattr(dataloader.dataset, 'normalizer'):
+            self.normalizer = dataloader.dataset.normalizer
+
         # Create output directories
         plots_dir = None
         npz_dir = None
@@ -346,30 +353,49 @@ class Tester:
                 file_results.append(result)
                 total_samples += 1
 
+                # Denormalize for plot and npz output
+                inp_dn = result['inputs'].copy()
+                pred_dn = result['predictions'].copy()
+                tgt_dn = result['targets'].copy() if has_targets else None
+
+                if self.normalizer is not None:
+                    for var_idx, var_name in enumerate(self.input_variables):
+                        inp_dn[:, var_idx] = self.normalizer.denormalize_omni(
+                            inp_dn[:, var_idx], var_name
+                        )
+                    for var_idx, var_name in enumerate(self.target_variables):
+                        pred_dn[:, var_idx] = self.normalizer.denormalize_omni(
+                            pred_dn[:, var_idx], var_name
+                        )
+                        if tgt_dn is not None:
+                            tgt_dn[:, var_idx] = self.normalizer.denormalize_omni(
+                                tgt_dn[:, var_idx], var_name
+                            )
+
                 # Save plot
                 if self.save_plots:
                     save_path = plots_dir / f"{file_name_base}.png"
                     plot_prediction_timeseries(
-                        inputs=result['inputs'],
-                        targets=result.get('targets'),
-                        predictions=result['predictions'],
+                        inputs=inp_dn,
+                        targets=tgt_dn,
+                        predictions=pred_dn,
                         input_variables=self.input_variables,
                         target_variables=self.target_variables,
                         save_path=save_path,
                         title=f"Test - {file_name_base}"
                     )
 
-                # Save NPZ
+                # Save NPZ (denormalized)
                 if self.save_npz:
                     npz_path = npz_dir / f"{file_name_base}.npz"
                     npz_data = {
-                        'inputs': result['inputs'],
-                        'predictions': result['predictions'],
+                        'inputs': inp_dn,
+                        'predictions': pred_dn,
                         'input_variables': self.input_variables,
                         'target_variables': self.target_variables
                     }
-                    if has_targets:
-                        npz_data['targets'] = result['targets']
+                    if tgt_dn is not None:
+                        npz_data['targets'] = tgt_dn
                     np.savez_compressed(npz_path, **npz_data)
 
             if (batch_idx + 1) % self.report_freq == 0:
