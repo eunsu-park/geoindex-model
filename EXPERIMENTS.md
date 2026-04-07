@@ -283,11 +283,100 @@ in2d_out24h 기반. 성공 기준: best epoch ≥ 8, train-val gap < 0.10, val_l
 
 ### Phase C: A5 기반 결합 실험
 
-| 실험 | Config | 변경 내용 | 상태 |
+| 실험 | Config | 변경 내용 | 결과 |
 |------|--------|----------|------|
-| C1 | `in2d_out24h_C1.yaml` | A5 (lr=5e-5, cosine) + A4 (d_model=64, layers=1) | 대기 |
-| C2 | `in2d_out24h_C2.yaml` | A5 + B2 (noise std=0.05) | 대기 |
-| C3 | `in2d_out24h_C3.yaml` | A5 + A4 + B2 (전부 결합) | 대기 |
+| C1 | `in2d_out24h_C1.yaml` | A5 + A4 (d_model=64, layers=1) | best=40, val_loss=0.619 (안정적이나 underfitting) |
+| **C2** | `in2d_out24h_C2.yaml` | A5 + noise (std=0.05) | **best=12, val_loss=0.603 (전체 최고)** |
+| C3 | `in2d_out24h_C3.yaml` | A5 + A4 + noise (전부 결합) | best=31, val_loss=0.620 (underfitting) |
+
+#### Phase C 분석
+
+- **C2가 현재까지 최적 24h 모델** (val_loss=0.603, val_mae=0.521)
+- Noise augmentation이 cosine 2번째 cycle에서 일반화를 도와 A5(0.606) 대비 추가 개선
+- 모델 축소(C1, C3)는 과적합을 잘 억제하나(gap=0.04~0.06) 용량 부족으로 underfitting
+- **d_model=128, layers=2를 유지하면서 lr=5e-5 + noise augmentation이 최적 조합**
+- Val loss ~0.60이 현 Transformer 아키텍처의 24h 예측 한계선으로 확인
+
+---
+
+## Next Steps
+
+### 1. 12h Cascade 추론 (24h = 12h × 2단)
+
+24h을 한 번에 예측하는 대신, 검증된 12h 모델(val_loss=0.284)을 2단 연결하여 24h 예측.
+
+#### 핵심 도전과제
+
+```
+Stage 1: 입력 [T-2d, T] (23변수) → 출력 ap30 [T, T+12h]      ← 문제 없음
+Stage 2: 입력 [T-36h, T+12h] (23변수) → 출력 ap30 [T+12h, T+24h]
+              ├─ [T-36h, T]: 실제 관측 데이터 23변수 ✓
+              └─ [T, T+12h]: ap30은 Stage 1 출력, 나머지 22개 태양풍 변수는? ✗
+```
+
+모델 입력이 23변수를 요구하므로, Stage 2의 미래 구간 [T, T+12h]에 대해 22개 태양풍 변수를 채워야 함.
+
+#### 구현 Phase
+
+**Phase 1: Oracle Cascade** (상한선 측정)
+- 미래 구간에 실제 태양풍 데이터 사용 (운영 불가, 이론적 상한 측정용)
+- 새 스크립트: `scripts/validate_cascade.py`
+- 새 config: `configs/cascade_oracle.yaml`
+- 결과가 C2(val_loss=0.603)를 유의미하게 이기면 Phase 2 진행
+
+**Phase 2: Persistence Cascade** (실용적 버전)
+- 미래 구간의 태양풍 22변수를 T 시점 값으로 forward-fill
+- ap30만 Stage 1 예측으로 교체
+- `validate_cascade.py`에 `--mode oracle|persistence` 옵션 추가
+
+**Phase 3: 결과 비교**
+
+| 비교 | 의미 |
+|------|------|
+| Oracle vs C2(0.603) | Cascade 방식의 이론적 이점 존재 여부 |
+| Persistence vs Oracle | 미래 태양풍 불확실성의 영향 크기 |
+| Persistence vs C2 | 실용적으로 cascade가 우월한가 |
+
+#### 구현 상세
+
+```python
+# Stage 2 입력 구성 (Persistence 모드):
+input_stage2_past = real_data[T-36h : T]         # (72, 23) 실제 데이터
+future_fill = real_data[T].repeat(24, axis=0)     # (24, 23) T 시점 값 복사
+future_fill[:, ap30_idx] = stage1_pred_ap30       # ap30만 Stage 1 예측으로 교체
+input_stage2 = concat(input_stage2_past, future_fill)  # (96, 23)
+```
+
+#### 수정 대상 파일
+
+| 파일 | 변경 |
+|------|------|
+| `scripts/validate_cascade.py` | 새로 생성 — cascade 추론 로직 |
+| `configs/cascade_oracle.yaml` | 새로 생성 — 두 모델 경로, 데이터 설정 |
+
+### 2. TCN 아키텍처 실험
+
+`model_type=tcn`이 이미 구현되어 있으며, 코드 검증 완료 (causal padding 정상, 입출력 shape Transformer와 호환).
+
+**Receptive field 참고**: channels=[64,128,256], kernel=3 → RF=29 timesteps (14.5h). 4 layer 시 RF=57 (28.5h).
+
+| 실험 | Config | 내용 | 상태 |
+|------|--------|------|------|
+| TCN 12h | `in2d_out12h_tcn.yaml` | TCN 기본, 12h 예측 (Transformer 비교용) | 대기 |
+| TCN 24h | `in2d_out24h_tcn.yaml` | TCN + C2 설정 (lr=5e-5, cosine, noise) | 대기 |
+| TCN 24h deep | `in2d_out24h_tcn_deep.yaml` | 4 layer (RF=57, 24h 커버), C2 설정 | 대기 |
+
+### 3. Attention 분석
+
+기존 12h/24h 모델의 attention 결과(`attention/best.zip`)를 비교하여 모델이 입력의 어느 시간대/변수에 집중하는지 분석. 24h 모델의 attention 분산 여부로 아키텍처 한계 진단.
+
+### 4. Snap 후처리 적용
+
+모델 재훈련 없이 denormalize 후 가장 가까운 유효 ap30 값에 매핑. validators.py, testers.py에 적용.
+
+### 5. 18h 실험
+
+12h(0.284)와 24h(0.603) 사이의 성능 저하 곡선 형태 확인. 예측 가능 시간 한계 특성화.
 
 ---
 
@@ -302,3 +391,6 @@ in2d_out24h 기반. 성공 기준: best epoch ≥ 8, train-val gap < 0.10, val_l
 | 2025-04-05 | 우선순위 4 추가: ap30 이산값 매핑 (snap 후처리 → ordinal classification 단계별) |
 | 2025-04-06 | A1~A5, B2 실험 결과 기록. A5(lr=5e-5)가 최고 — best epoch=11, 과적합 효과적 억제 |
 | 2025-04-06 | 우선순위 4 상세화: 이산값 매핑 방법 (1)후처리 snap, (2A~2C)모델 변경 분석. (1) 즉시 적용 권장, (2)는 현 시점 비권장 |
+| 2025-04-06 | C1~C3 실험 결과 기록. C2(A5+noise)가 전체 최고 — val_loss=0.603. 모델 축소는 underfitting 확인 |
+| 2025-04-06 | Next Steps 추가: 12h Cascade 구현 계획 (Oracle→Persistence 단계별), TCN 실험, Attention 분석 등 |
+| 2025-04-06 | TCN 코드 검증 완료 (causal padding 정상). TCN config 3개 생성 (12h, 24h, 24h deep) |
