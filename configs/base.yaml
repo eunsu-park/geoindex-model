@@ -329,6 +329,27 @@ model:
   tcn_kernel_size: 3
   tcn_dropout: 0.1
 
+  # GNN (Graph Neural Network with pluggable temporal encoder)
+  gnn_temporal_type: "transformer"  # "transformer", "tcn", or "bilstm"
+  gnn_node_feature_dim: 32          # Feature dim per graph node
+  gnn_gcn_hidden_dim: 64            # Hidden dim in GCN layers
+  gnn_num_gcn_layers: 2             # Number of GCN layers
+  gnn_dropout: 0.1                  # Dropout rate
+  gnn_node_embed_dim: 16            # Node embedding dim for adaptive adjacency
+
+  # BiLSTM (used as GNN temporal encoder when gnn_temporal_type="bilstm")
+  bilstm_hidden_size: 128
+  bilstm_num_layers: 2
+
+  # TimesNet (FFT-based period detection + 2D convolution)
+  timesnet_d_model: 64              # Internal feature dim for TimesBlocks
+  timesnet_d_ff: 128                # Hidden dim in Inception blocks
+  timesnet_num_blocks: 2            # Number of stacked TimesBlocks
+  timesnet_top_k: 3                 # Number of dominant periods per block
+  timesnet_num_kernels: 3           # Number of parallel Inception conv branches
+  timesnet_dropout: 0.1
+  timesnet_cross_variable: true     # Enable cross-variable mixing (addresses channel-independent limitation)
+
   # Output sequence length
   # Auto-computed from data config if null, or override manually
   output_seq_len: null
