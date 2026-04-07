@@ -1,0 +1,31 @@
+# Experiment: Deeper TCN for 24h prediction (wider receptive field)
+# Goal: Expand receptive field from 29 to 57 timesteps (28.5h) to cover 24h output
+# Usage: python scripts/train.py --config-name=in2d_out24h_tcn_deep
+
+defaults:
+  - in2d_out24h
+  - _self_
+
+experiment:
+  name: "in2d_out24h_tcn_deep"
+
+model:
+  model_type: "tcn"
+  tcn_channels:
+    - 64
+    - 128
+    - 256
+    - 256
+  tcn_kernel_size: 3
+  tcn_dropout: 0.1
+
+training:
+  learning_rate: 5.0e-5
+  weight_decay: 0.01
+  scheduler_type: "cosine_annealing"
+  epochs: 60
+
+data:
+  timeseries:
+    augmentation:
+      gaussian_noise_std: 0.05
