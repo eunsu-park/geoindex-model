@@ -1,0 +1,28 @@
+# Experiment C3: A5 (low LR) + A4 (small model) + B2 (augmentation)
+# Goal: Maximum regularization — all three best techniques combined
+# Usage: python scripts/train.py --config-name=in2d_out24h_C3
+
+defaults:
+  - in2d_out24h
+  - _self_
+
+experiment:
+  name: "in2d_out24h_C3_lowlr_small_augment"
+
+training:
+  learning_rate: 5.0e-5
+  weight_decay: 0.01
+  scheduler_type: "cosine_annealing"
+  epochs: 60
+
+model:
+  d_model: 64
+  transformer_nhead: 4
+  transformer_num_layers: 1
+  transformer_dim_feedforward: 128
+  transformer_dropout: 0.2
+
+data:
+  timeseries:
+    augmentation:
+      gaussian_noise_std: 0.05
