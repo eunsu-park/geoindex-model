@@ -366,15 +366,97 @@ input_stage2 = concat(input_stage2_past, future_fill)  # (96, 23)
 | TCN 24h | `in2d_out24h_tcn.yaml` | TCN + C2 설정 (lr=5e-5, cosine, noise) | 대기 |
 | TCN 24h deep | `in2d_out24h_tcn_deep.yaml` | 4 layer (RF=57, 24h 커버), C2 설정 | 대기 |
 
-### 3. Attention 분석
+### 3. GNN 모델 구현
+
+#### 선행 연구
+
+SYMHnet (Abduallah et al., 2024, Space Weather)이 GNN+BiLSTM으로 태양풍 → SYM-H 예측에서 SOTA 달성. 7개 태양풍/IMF 파라미터를 완전연결 그래프 노드로 구성, GCN 2 layer로 변수 간 관계 학습. Ablation에서 GNN 제거 시 R² 0.993→0.789로 급락 — 변수 간 관계 학습이 핵심 기여 확인.
+
+#### 우리 과제에 대한 적용 방향
+
+SYMHnet은 7개 변수 × 단일 시점 그래프 + BiLSTM(10 timestep)이지만, 우리 과제는 23개 변수 × 96 timestep 입력 → 24-48 timestep 시퀀스 출력. 따라서 SYMHnet 구조를 그대로 차용하지 않고, 기존 파이프라인에 맞게 설계.
+
+**GNNEncoder 설계:**
+- 노드 = 7개 물리 변수 그룹 (v, np, t, bx, by, bz, bt) + 2개 지수 (ap30, hp30) = 9 노드
+  - 각 노드의 feature = avg/min/max triplet (3차원), ap30/hp30은 1차원
+  - 전체: 7×3 + 2×1 = 23개 입력 변수를 9개 노드로 자연스럽게 매핑
+- 엣지 = 적응적 학습 (MTGNN 방식: `A = softmax(relu(E1·E2ᵀ))`)
+  - 물리적으로 의미 있는 관계 자동 학습 (예: Bz↔ap30 강한 연결)
+  - 학습된 인접 행렬 시각화로 모델 해석 가능
+- 시간축 = 기존 Transformer/TCN과 동일하게 처리 (GCN per timestep → temporal encoder)
+
+**구현 상태: 완료** (순수 PyTorch, 외부 의존성 없음)
+- `GraphConvLayer`: 단일 GCN layer (adaptive adj × node features × weight)
+- `GNNEncoder`: 변수 그룹화 → per-timestep GCN → temporal encoder (플러그인)
+- `GNNOnlyModel`: GNNEncoder + regression head (기존 인터페이스 호환)
+- `create_model()`에 `model_type="gnn"` 분기 추가 완료
+- Temporal encoder를 `gnn_temporal_type`으로 선택: `"transformer"`, `"tcn"`, `"bilstm"`
+
+**실험 config:**
+
+| Config | GNN temporal | 예측 | 훈련 설정 |
+|--------|-------------|------|---------|
+| `in2d_out12h_gnn_transformer.yaml` | Transformer | 12h | 기본 |
+| `in2d_out12h_gnn_tcn.yaml` | TCN | 12h | 기본 |
+| `in2d_out12h_gnn_bilstm.yaml` | BiLSTM | 12h | 기본 |
+| `in2d_out24h_gnn_transformer.yaml` | Transformer | 24h | C2 (lr=5e-5, cosine, noise) |
+| `in2d_out24h_gnn_tcn.yaml` | TCN | 24h | C2 |
+| `in2d_out24h_gnn_bilstm.yaml` | BiLSTM | 24h | C2 |
+
+### 4. TimesNet 모델 구현
+
+#### 선행 연구
+
+SINet (Wang et al., 2026, JGR Space Physics)이 TimesNet 기반으로 F10.7/F30 태양 지수 예측에서 TCN 대비 MAPE 개선 (10.2% vs 10.8%). 단, **단변량** 예측이며, 돌발 이벤트(AR 12673)에서 성능 저하를 논문 스스로 인정.
+
+#### 우리 과제에 대한 적용 방향
+
+원본 TimesNet은 채널 독립(channel-independent)이라 변수 간 관계를 학습하지 못함. 우리 과제에 맞게 **채널 혼합 확장**과 **다변량 입력** 지원 추가.
+
+**TimesNetEncoder 설계:**
+- FFT 기반 주기 탐지: 입력 시계열에서 top-k 지배 주기 추출 (k=3)
+  - 태양풍 데이터의 준주기적 패턴 (태양 자전 27일 등) 포착 가능
+- 1D→2D reshape: 각 주기별로 (period, seq_len/period) 2D 텐서 생성
+- 2D Inception Conv: 다중 스케일 커널로 주기 내/간 패턴 추출
+- Adaptive aggregation: FFT 진폭 기반 가중 합산
+- **채널 혼합 확장**: 2D Conv 이후 cross-variable attention 또는 1×1 Conv로 변수 간 정보 교환
+
+**구현 상태: 완료**
+- `InceptionBlock`: 다중 스케일 2D Conv (kernel 1,3,5)
+- `TimesBlock`: FFT 주기 탐지 → 1D→2D reshape → Inception → reshape back → adaptive aggregation
+- `TimesNetEncoder`: TimesBlock 스택 + LayerNorm + **cross-variable self-attention** (채널 독립 문제 해결)
+- `TimesNetOnlyModel`: TimesNetEncoder + regression head (기존 인터페이스 호환)
+- `create_model()`에 `model_type="timesnet"` 분기 추가 완료
+
+**실험 config:**
+
+| Config | 예측 | 훈련 설정 |
+|--------|------|---------|
+| `in2d_out12h_timesnet.yaml` | 12h | 기본 |
+| `in2d_out24h_timesnet.yaml` | 24h | C2 (lr=5e-5, cosine, noise) |
+
+**주의:** 폭풍 이벤트가 비주기적이므로 TimesNet 단독 성능은 제한적일 수 있음. GNN과의 비교 실험이 핵심.
+
+### 5. GNN vs TimesNet 비교 근거
+
+| 항목 | GNN | TimesNet |
+|------|-----|----------|
+| **선행 사례** | SYMHnet: 태양풍→SYM-H (동일 도메인) | SINet: F10.7 예측 (다른 과제) |
+| **변수 간 관계** | 명시적 그래프 학습 (핵심 강점) | 채널 독립 (확장 필요) |
+| **주기성** | 약함 | 핵심 강점 (FFT 기반) |
+| **폭풍 이벤트** | 양호 (SYMHnet 검증) | 약함 (SINet 논문에서 확인) |
+| **해석 가능성** | 학습된 그래프 시각화 | 주기 분해 시각화 |
+| **구현 난이도** | 중간 (GCN + adaptive adj) | 중간 (FFT + 2D Conv) |
+
+### 6. Attention 분석
 
 기존 12h/24h 모델의 attention 결과(`attention/best.zip`)를 비교하여 모델이 입력의 어느 시간대/변수에 집중하는지 분석. 24h 모델의 attention 분산 여부로 아키텍처 한계 진단.
 
-### 4. Snap 후처리 적용
+### 7. Snap 후처리 적용
 
 모델 재훈련 없이 denormalize 후 가장 가까운 유효 ap30 값에 매핑. validators.py, testers.py에 적용.
 
-### 5. 18h 실험
+### 8. 18h 실험
 
 12h(0.284)와 24h(0.603) 사이의 성능 저하 곡선 형태 확인. 예측 가능 시간 한계 특성화.
 
@@ -394,3 +476,7 @@ input_stage2 = concat(input_stage2_past, future_fill)  # (96, 23)
 | 2025-04-06 | C1~C3 실험 결과 기록. C2(A5+noise)가 전체 최고 — val_loss=0.603. 모델 축소는 underfitting 확인 |
 | 2025-04-06 | Next Steps 추가: 12h Cascade 구현 계획 (Oracle→Persistence 단계별), TCN 실험, Attention 분석 등 |
 | 2025-04-06 | TCN 코드 검증 완료 (causal padding 정상). TCN config 3개 생성 (12h, 24h, 24h deep) |
+| 2025-04-06 | 문헌 조사: SYMHnet(GNN, Abduallah 2024), SINet(TimesNet, Wang 2026), Billcliff(Hp30, 2026) |
+| 2025-04-06 | GNN/TimesNet 구현 계획 수립 — 선행 연구 기반, 우리 데이터에 맞게 설계 |
+| 2025-04-06 | GNN 구현 완료: GNNEncoder + GNNOnlyModel (순수 PyTorch). 3종 temporal encoder (Transformer/TCN/BiLSTM) 플러그인. config 6개 생성 |
+| 2025-04-06 | TimesNet 구현 완료: TimesBlock + TimesNetEncoder + cross-variable attention 확장. config 2개 생성 |
