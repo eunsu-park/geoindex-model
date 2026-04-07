@@ -628,19 +628,8 @@ class Trainer:
             cosine_sim = F.cosine_similarity(
                 ts_features, img_features, dim=1
             ).mean().item()
-        elif self.model_type == "transformer":
-            outputs = self.model(inputs, sdo, return_features=False)
-            cont_loss = torch.tensor(0.0, device=self.device)
-            cosine_sim = 0.0
-        elif self.model_type == "linear":
-            outputs = self.model(inputs, sdo, return_features=False)
-            cont_loss = torch.tensor(0.0, device=self.device)
-            cosine_sim = 0.0
-        elif self.model_type == "tcn":
-            outputs = self.model(inputs, sdo, return_features=False)
-            cont_loss = torch.tensor(0.0, device=self.device)
-            cosine_sim = 0.0
-        elif self.model_type == "convlstm":
+        elif self.model_type in ("transformer", "linear", "tcn", "convlstm",
+                                   "gnn", "timesnet"):
             outputs = self.model(inputs, sdo, return_features=False)
             cont_loss = torch.tensor(0.0, device=self.device)
             cosine_sim = 0.0
@@ -738,19 +727,8 @@ class Trainer:
             cosine_sim = F.cosine_similarity(
                 ts_features, img_features, dim=1
             ).mean().item()
-        elif self.model_type == "transformer":
-            outputs = self.model(inputs, sdo, return_features=False)
-            cont_loss = torch.tensor(0.0, device=self.device)
-            cosine_sim = 0.0
-        elif self.model_type == "linear":
-            outputs = self.model(inputs, sdo, return_features=False)
-            cont_loss = torch.tensor(0.0, device=self.device)
-            cosine_sim = 0.0
-        elif self.model_type == "tcn":
-            outputs = self.model(inputs, sdo, return_features=False)
-            cont_loss = torch.tensor(0.0, device=self.device)
-            cosine_sim = 0.0
-        elif self.model_type == "convlstm":
+        elif self.model_type in ("transformer", "linear", "tcn", "convlstm",
+                                   "gnn", "timesnet"):
             outputs = self.model(inputs, sdo, return_features=False)
             cont_loss = torch.tensor(0.0, device=self.device)
             cosine_sim = 0.0
