@@ -1,4 +1,4 @@
-# Experiment: tcn for in3d out12h
+# Experiment: tcn, in3d input, out12h output
 # Usage: python scripts/train.py --config-name=in3d_out12h_tcn
 
 defaults:

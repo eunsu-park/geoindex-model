@@ -1,0 +1,13 @@
+# Experiment: gnn_transformer, in3d input, out6h output
+# Usage: python scripts/train.py --config-name=in3d_out6h_gnn_transformer
+
+defaults:
+  - in3d_out6h
+  - _self_
+
+experiment:
+  name: "in3d_out6h_gnn_transformer"
+
+model:
+  model_type: "gnn"
+  gnn_temporal_type: "transformer"

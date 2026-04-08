@@ -1,4 +1,4 @@
-# Experiment: gnn_transformer for in3d out24h
+# Experiment: gnn_transformer, in3d input, out24h output
 # Usage: python scripts/train.py --config-name=in3d_out24h_gnn_transformer
 
 defaults:
@@ -11,14 +11,3 @@ experiment:
 model:
   model_type: "gnn"
   gnn_temporal_type: "transformer"
-
-training:
-  learning_rate: 5.0e-5
-  weight_decay: 0.01
-  scheduler_type: "cosine_annealing"
-  epochs: 60
-
-data:
-  timeseries:
-    augmentation:
-      gaussian_noise_std: 0.05

@@ -1,0 +1,13 @@
+# Experiment: gnn_patchtst, in1d input, out6h output
+# Usage: python scripts/train.py --config-name=in1d_out6h_gnn_patchtst
+
+defaults:
+  - in1d_out6h
+  - _self_
+
+experiment:
+  name: "in1d_out6h_gnn_patchtst"
+
+model:
+  model_type: "gnn"
+  gnn_temporal_type: "patch_transformer"

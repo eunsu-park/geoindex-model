@@ -1,4 +1,4 @@
-# Experiment: gnn_bilstm for in3d out12h
+# Experiment: gnn_bilstm, in3d input, out12h output
 # Usage: python scripts/train.py --config-name=in3d_out12h_gnn_bilstm
 
 defaults:

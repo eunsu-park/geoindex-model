@@ -1,4 +1,4 @@
-# Experiment: GNN + BiLSTM temporal encoder, 12h prediction
+# Experiment: gnn_bilstm, in2d input, out12h output
 # Usage: python scripts/train.py --config-name=in2d_out12h_gnn_bilstm
 
 defaults:

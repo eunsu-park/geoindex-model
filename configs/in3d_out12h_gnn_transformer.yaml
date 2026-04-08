@@ -1,4 +1,4 @@
-# Experiment: gnn_transformer for in3d out12h
+# Experiment: gnn_transformer, in3d input, out12h output
 # Usage: python scripts/train.py --config-name=in3d_out12h_gnn_transformer
 
 defaults:

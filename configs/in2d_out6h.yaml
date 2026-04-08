@@ -1,0 +1,19 @@
+# Experiment: 2-day input, 6-hour output
+# Usage: python scripts/train.py --config-name=in2d_out6h
+
+defaults:
+  - local
+  - _self_
+
+experiment:
+  name: "in2d_out6h"
+
+data:
+  timeseries:
+    input_start: -96
+    input_end: 0
+    target_start: 0
+    target_end: 12
+
+model:
+  model_type: "linear"

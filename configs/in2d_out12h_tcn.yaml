@@ -1,5 +1,4 @@
-# Experiment: TCN encoder for 12h prediction
-# Goal: Compare TCN vs Transformer on 12h task
+# Experiment: tcn, in2d input, out12h output
 # Usage: python scripts/train.py --config-name=in2d_out12h_tcn
 
 defaults:
@@ -11,9 +10,3 @@ experiment:
 
 model:
   model_type: "tcn"
-  tcn_channels:
-    - 64
-    - 128
-    - 256
-  tcn_kernel_size: 3
-  tcn_dropout: 0.1

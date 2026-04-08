@@ -1,5 +1,4 @@
-# Experiment: TCN encoder for 24h prediction (C2 settings)
-# Goal: Test if TCN handles 24h better than Transformer
+# Experiment: tcn, in2d input, out24h output
 # Usage: python scripts/train.py --config-name=in2d_out24h_tcn
 
 defaults:
@@ -11,20 +10,3 @@ experiment:
 
 model:
   model_type: "tcn"
-  tcn_channels:
-    - 64
-    - 128
-    - 256
-  tcn_kernel_size: 3
-  tcn_dropout: 0.1
-
-training:
-  learning_rate: 5.0e-5
-  weight_decay: 0.01
-  scheduler_type: "cosine_annealing"
-  epochs: 60
-
-data:
-  timeseries:
-    augmentation:
-      gaussian_noise_std: 0.05

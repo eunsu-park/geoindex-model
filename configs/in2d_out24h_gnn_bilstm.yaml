@@ -1,4 +1,4 @@
-# Experiment: GNN + BiLSTM temporal encoder, 24h prediction (C2 settings)
+# Experiment: gnn_bilstm, in2d input, out24h output
 # Usage: python scripts/train.py --config-name=in2d_out24h_gnn_bilstm
 
 defaults:
@@ -11,14 +11,3 @@ experiment:
 model:
   model_type: "gnn"
   gnn_temporal_type: "bilstm"
-
-training:
-  learning_rate: 5.0e-5
-  weight_decay: 0.01
-  scheduler_type: "cosine_annealing"
-  epochs: 60
-
-data:
-  timeseries:
-    augmentation:
-      gaussian_noise_std: 0.05

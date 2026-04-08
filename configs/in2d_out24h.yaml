@@ -14,3 +14,6 @@ data:
     input_end: 0
     target_start: 0
     target_end: 48
+
+model:
+  model_type: "linear"

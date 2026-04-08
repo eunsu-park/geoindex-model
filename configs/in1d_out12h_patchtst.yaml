@@ -1,0 +1,12 @@
+# Experiment: patchtst, in1d input, out12h output
+# Usage: python scripts/train.py --config-name=in1d_out12h_patchtst
+
+defaults:
+  - in1d_out12h
+  - _self_
+
+experiment:
+  name: "in1d_out12h_patchtst"
+
+model:
+  model_type: "patchtst"
