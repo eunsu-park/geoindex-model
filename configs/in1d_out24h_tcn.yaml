@@ -1,0 +1,23 @@
+# Experiment: tcn for in1d out24h
+# Usage: python scripts/train.py --config-name=in1d_out24h_tcn
+
+defaults:
+  - in1d_out24h
+  - _self_
+
+experiment:
+  name: "in1d_out24h_tcn"
+
+model:
+  model_type: "tcn"
+
+training:
+  learning_rate: 5.0e-5
+  weight_decay: 0.01
+  scheduler_type: "cosine_annealing"
+  epochs: 60
+
+data:
+  timeseries:
+    augmentation:
+      gaussian_noise_std: 0.05

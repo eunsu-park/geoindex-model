@@ -1,0 +1,12 @@
+# Experiment: tcn for in1d out12h
+# Usage: python scripts/train.py --config-name=in1d_out12h_tcn
+
+defaults:
+  - in1d_out12h
+  - _self_
+
+experiment:
+  name: "in1d_out12h_tcn"
+
+model:
+  model_type: "tcn"

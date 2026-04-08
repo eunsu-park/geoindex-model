@@ -1,0 +1,13 @@
+# Experiment: gnn_tcn for in3d out12h
+# Usage: python scripts/train.py --config-name=in3d_out12h_gnn_tcn
+
+defaults:
+  - in3d_out12h
+  - _self_
+
+experiment:
+  name: "in3d_out12h_gnn_tcn"
+
+model:
+  model_type: "gnn"
+  gnn_temporal_type: "tcn"
