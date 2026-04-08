@@ -1083,9 +1083,9 @@ class TCNOnlyModel(nn.Module):
 # Graph Neural Network (GNN) Components
 # =============================================================================
 
-# Default variable-to-node grouping for solar wind data:
-# 7 physical variable groups (avg/min/max triplet each) + 2 geomagnetic indices
-VARIABLE_NODE_GROUPS = {
+# Default variable-to-node grouping for solar wind data (fallback)
+# 7 physical variable groups (avg/min/max triplet each) + 1 geomagnetic index
+DEFAULT_VARIABLE_NODE_GROUPS = {
     'v': ['v_avg', 'v_min', 'v_max'],
     'np': ['np_avg', 'np_min', 'np_max'],
     't': ['t_avg', 't_min', 't_max'],
@@ -1094,8 +1094,73 @@ VARIABLE_NODE_GROUPS = {
     'bz': ['bz_avg', 'bz_min', 'bz_max'],
     'bt': ['bt_avg', 'bt_min', 'bt_max'],
     'ap30': ['ap30'],
-    'hp30': ['hp30'],
 }
+
+
+def build_gnn_node_groups(config):
+    """Build GNN node groups from config with validation.
+
+    Reads gnn_variable_groups from config if available, otherwise uses
+    DEFAULT_VARIABLE_NODE_GROUPS as fallback. Validates that:
+    1. All variables in groups exist in input_variables
+    2. All input_variables are assigned to a group
+    3. Group order matches input_variables order (sequential split)
+
+    Args:
+        config: Hydra config object.
+
+    Returns:
+        Tuple of (group_sizes: List[int], num_nodes: int)
+
+    Raises:
+        ValueError: If validation fails.
+    """
+    input_vars = list(config.data.timeseries.input_variables)
+
+    # Get groups from config or fallback
+    if hasattr(config.data.timeseries, 'gnn_variable_groups'):
+        raw_groups = config.data.timeseries.gnn_variable_groups
+        groups = {k: list(v) for k, v in raw_groups.items()}
+    else:
+        groups = DEFAULT_VARIABLE_NODE_GROUPS
+
+    input_var_set = set(input_vars)
+
+    # Validation 1: all group variables exist in input_variables
+    for group_name, var_list in groups.items():
+        for var in var_list:
+            if var not in input_var_set:
+                raise ValueError(
+                    f"GNN group '{group_name}' contains variable '{var}' "
+                    f"not found in input_variables"
+                )
+
+    # Validation 2: all input_variables are in some group
+    grouped_vars = set()
+    for var_list in groups.values():
+        grouped_vars.update(var_list)
+    ungrouped = input_var_set - grouped_vars
+    if ungrouped:
+        raise ValueError(
+            f"Input variables {ungrouped} not assigned to any "
+            f"gnn_variable_group. Add them to config or update groups."
+        )
+
+    # Validation 3: group order matches input_variables sequential order
+    expected_order = []
+    for var_list in groups.values():
+        expected_order.extend(var_list)
+    if expected_order != input_vars:
+        raise ValueError(
+            f"GNN group variable order does not match input_variables order.\n"
+            f"  Groups produce: {expected_order}\n"
+            f"  Config expects: {input_vars}\n"
+            f"Reorder gnn_variable_groups to match input_variables."
+        )
+
+    group_sizes = [len(v) for v in groups.values()]
+    num_nodes = len(groups)
+    return group_sizes, num_nodes
 
 
 class GraphConvLayer(nn.Module):
@@ -1161,15 +1226,12 @@ class GNNEncoder(nn.Module):
         bilstm_num_layers: Number of BiLSTM layers.
     """
 
-    # Variable group sizes (hardcoded for 23-var solar wind input)
-    _GROUP_SIZES = [3, 3, 3, 3, 3, 3, 3, 1, 1]  # v,np,t,bx,by,bz,bt,ap30,hp30
-    _NUM_NODES = 9
-
     def __init__(
         self,
         num_input_variables: int,
         input_sequence_length: int,
-        num_nodes: int = 9,
+        group_sizes: list = None,
+        num_nodes: int = None,
         node_feature_dim: int = 32,
         gcn_hidden_dim: int = 64,
         num_gcn_layers: int = 2,
@@ -1187,15 +1249,25 @@ class GNNEncoder(nn.Module):
         # BiLSTM temporal params
         bilstm_hidden_size: int = 128,
         bilstm_num_layers: int = 2,
+        # PatchTransformer temporal params
+        patch_len: int = 16,
+        patch_stride: int = 8,
     ):
         super().__init__()
 
-        if num_input_variables != sum(self._GROUP_SIZES):
+        # Use provided group_sizes or fallback defaults
+        if group_sizes is None:
+            group_sizes = [len(v) for v in DEFAULT_VARIABLE_NODE_GROUPS.values()]
+        if num_nodes is None:
+            num_nodes = len(group_sizes)
+
+        if num_input_variables != sum(group_sizes):
             raise ValueError(
-                f"Expected {sum(self._GROUP_SIZES)} input variables, "
-                f"got {num_input_variables}"
+                f"num_input_variables ({num_input_variables}) != "
+                f"sum(group_sizes) ({sum(group_sizes)})"
             )
 
+        self._GROUP_SIZES = group_sizes
         self.num_nodes = num_nodes
         self.node_feature_dim = node_feature_dim
         self.temporal_type = temporal_type
@@ -1272,13 +1344,38 @@ class GNNEncoder(nn.Module):
                 dropout=dropout if bilstm_num_layers > 1 else 0.0
             )
             self._bilstm_out_dim = bilstm_hidden_size * 2  # bidirectional
+        elif temporal_type == "patch_transformer":
+            self.temporal_proj = nn.Linear(temporal_input_dim, d_model)
+            self._patch_embed = PatchEmbedding(
+                patch_len=patch_len,
+                stride=patch_stride,
+                d_input=d_model,
+                d_model=d_model,
+                dropout=dropout
+            )
+            # Calculate num_patches for positional embedding
+            pad_len = (patch_stride - (input_sequence_length - patch_len) % patch_stride) % patch_stride
+            n_patches = (input_sequence_length + pad_len - patch_len) // patch_stride + 1
+            self._patch_pos_embed = nn.Parameter(
+                torch.randn(1, n_patches, d_model) * 0.02
+            )
+            encoder_layer = nn.TransformerEncoderLayer(
+                d_model=d_model,
+                nhead=transformer_nhead,
+                dim_feedforward=transformer_dim_feedforward,
+                dropout=dropout,
+                batch_first=True
+            )
+            self.temporal_encoder = nn.TransformerEncoder(
+                encoder_layer, num_layers=transformer_num_layers
+            )
         else:
             raise ValueError(f"Unknown temporal_type: {temporal_type}")
 
         # Global pooling + output projection
         self.global_pool = nn.AdaptiveAvgPool1d(1)
 
-        if temporal_type == "transformer":
+        if temporal_type in ("transformer", "patch_transformer"):
             self.output_projection = nn.Linear(d_model, d_model)
         elif temporal_type == "tcn":
             self.output_projection = nn.Linear(self._tcn_out_dim, d_model)
@@ -1355,6 +1452,12 @@ class GNNEncoder(nn.Module):
             h = self.temporal_proj(h)  # (batch, seq_len, hidden_size)
             h, _ = self.temporal_encoder(h)  # (batch, seq_len, hidden*2)
             h = h.transpose(1, 2)  # (batch, hidden*2, seq_len)
+        elif self.temporal_type == "patch_transformer":
+            h = self.temporal_proj(h)  # (batch, seq_len, d_model)
+            tokens = self._patch_embed(h)  # (batch, num_patches, d_model)
+            tokens = tokens + self._patch_pos_embed[:, :tokens.size(1), :]
+            h = self.temporal_encoder(tokens)  # (batch, num_patches, d_model)
+            h = h.transpose(1, 2)  # (batch, d_model, num_patches)
 
         # 6. Global pooling + output projection
         h = self.global_pool(h).squeeze(-1)  # (batch, feat_dim)
@@ -1404,6 +1507,8 @@ class GNNOnlyModel(nn.Module):
         num_target_variables: int,
         target_sequence_length: int,
         d_model: int = 128,
+        gnn_group_sizes: list = None,
+        gnn_num_nodes: int = None,
         gnn_node_feature_dim: int = 32,
         gnn_gcn_hidden_dim: int = 64,
         gnn_num_gcn_layers: int = 2,
@@ -1418,6 +1523,8 @@ class GNNOnlyModel(nn.Module):
         tcn_kernel_size: int = 3,
         bilstm_hidden_size: int = 128,
         bilstm_num_layers: int = 2,
+        patch_len: int = 16,
+        patch_stride: int = 8,
     ):
         super().__init__()
 
@@ -1430,6 +1537,8 @@ class GNNOnlyModel(nn.Module):
         self.gnn_encoder = GNNEncoder(
             num_input_variables=num_input_variables,
             input_sequence_length=input_sequence_length,
+            group_sizes=gnn_group_sizes,
+            num_nodes=gnn_num_nodes,
             node_feature_dim=gnn_node_feature_dim,
             gcn_hidden_dim=gnn_gcn_hidden_dim,
             num_gcn_layers=gnn_num_gcn_layers,
@@ -1444,6 +1553,8 @@ class GNNOnlyModel(nn.Module):
             tcn_kernel_size=tcn_kernel_size,
             bilstm_hidden_size=bilstm_hidden_size,
             bilstm_num_layers=bilstm_num_layers,
+            patch_len=patch_len,
+            patch_stride=patch_stride,
         )
 
         # Regression head (identical to Transformer/TCN models)
@@ -1554,6 +1665,11 @@ class TimesBlock(nn.Module):
     ):
         super().__init__()
         self.seq_len = seq_len
+        max_k = seq_len // 2  # FFT produces seq_len//2+1 freq bins, minus DC
+        if top_k > max_k:
+            raise ValueError(
+                f"top_k ({top_k}) must be <= seq_len//2 ({max_k})"
+            )
         self.top_k = top_k
 
         # Two Inception blocks (encoder-decoder style, as in SINet)
@@ -1832,6 +1948,246 @@ class TimesNetOnlyModel(nn.Module):
         return output
 
 
+# =============================================================================
+# PatchTST Components
+# =============================================================================
+
+class PatchEmbedding(nn.Module):
+    """Convert time series into patch tokens via sliding window.
+
+    Divides a sequence into (possibly overlapping) patches and projects
+    each patch to a d_model-dimensional embedding.
+
+    Args:
+        patch_len: Length of each patch (number of timesteps per patch).
+        stride: Stride between consecutive patches.
+        d_input: Input feature dimension per timestep.
+        d_model: Output embedding dimension per patch token.
+        dropout: Dropout rate.
+    """
+
+    def __init__(
+        self,
+        patch_len: int = 16,
+        stride: int = 8,
+        d_input: int = 1,
+        d_model: int = 128,
+        dropout: float = 0.1
+    ):
+        super().__init__()
+        self.patch_len = patch_len
+        self.stride = stride
+
+        # Linear projection: (patch_len * d_input) → d_model
+        self.projection = nn.Linear(patch_len * d_input, d_model)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Create patch tokens from input sequence.
+
+        Args:
+            x: Input tensor (batch, seq_len, d_input).
+
+        Returns:
+            Patch tokens (batch, num_patches, d_model).
+        """
+        batch_size, seq_len, d_input = x.size()
+
+        # Pad sequence if needed so all timesteps are covered
+        pad_len = (self.stride - (seq_len - self.patch_len) % self.stride) % self.stride
+        if pad_len > 0:
+            x = F.pad(x, (0, 0, 0, pad_len))  # Pad seq_len dimension
+
+        # Unfold into patches: (batch, num_patches, patch_len, d_input)
+        padded_len = x.size(1)
+        num_patches = (padded_len - self.patch_len) // self.stride + 1
+        patches = x.unfold(1, self.patch_len, self.stride)  # (batch, num_patches, d_input, patch_len)
+        patches = patches.permute(0, 1, 3, 2)  # (batch, num_patches, patch_len, d_input)
+
+        # Flatten and project: (batch, num_patches, patch_len * d_input) → (batch, num_patches, d_model)
+        patches = patches.reshape(batch_size, num_patches, -1)
+        tokens = self.projection(patches)
+        tokens = self.dropout(tokens)
+
+        return tokens
+
+
+class PatchTransformerEncoder(nn.Module):
+    """PatchTST-style encoder for time series.
+
+    Divides input into patches, applies Transformer encoder on patch tokens,
+    then pools to a fixed-size representation.
+
+    Args:
+        num_input_variables: Number of input features per timestep.
+        input_sequence_length: Length of input sequence.
+        d_model: Transformer/output dimension.
+        patch_len: Patch length (timesteps per patch).
+        patch_stride: Stride between patches.
+        nhead: Number of attention heads.
+        num_layers: Number of Transformer encoder layers.
+        dim_feedforward: Feedforward dimension.
+        dropout: Dropout rate.
+    """
+
+    def __init__(
+        self,
+        num_input_variables: int,
+        input_sequence_length: int,
+        d_model: int = 128,
+        patch_len: int = 16,
+        patch_stride: int = 8,
+        nhead: int = 4,
+        num_layers: int = 2,
+        dim_feedforward: int = 256,
+        dropout: float = 0.1
+    ):
+        super().__init__()
+        self.num_input_variables = num_input_variables
+        self.input_sequence_length = input_sequence_length
+        self.d_model = d_model
+
+        # Patch embedding
+        self.patch_embed = PatchEmbedding(
+            patch_len=patch_len,
+            stride=patch_stride,
+            d_input=num_input_variables,
+            d_model=d_model,
+            dropout=dropout
+        )
+
+        # Calculate number of patches for positional encoding
+        pad_len = (patch_stride - (input_sequence_length - patch_len) % patch_stride) % patch_stride
+        self.num_patches = (input_sequence_length + pad_len - patch_len) // patch_stride + 1
+
+        # Learnable positional embedding (PatchTST style)
+        self.pos_embed = nn.Parameter(
+            torch.randn(1, self.num_patches, d_model) * 0.02
+        )
+
+        # Transformer encoder
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=nhead,
+            dim_feedforward=dim_feedforward,
+            dropout=dropout,
+            batch_first=True
+        )
+        self.transformer_encoder = nn.TransformerEncoder(
+            encoder_layer, num_layers=num_layers
+        )
+
+        # Global pooling + output projection
+        self.global_pool = nn.AdaptiveAvgPool1d(1)
+        self.output_projection = nn.Linear(d_model, d_model)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass.
+
+        Args:
+            x: Input tensor (batch, seq_len, num_vars).
+
+        Returns:
+            Output features (batch, d_model).
+        """
+        # 1. Create patch tokens
+        tokens = self.patch_embed(x)  # (batch, num_patches, d_model)
+
+        # 2. Add positional embedding
+        tokens = tokens + self.pos_embed[:, :tokens.size(1), :]
+
+        # 3. Transformer encoder
+        h = self.transformer_encoder(tokens)  # (batch, num_patches, d_model)
+
+        # 4. Global pooling
+        h = h.transpose(1, 2)  # (batch, d_model, num_patches)
+        h = self.global_pool(h).squeeze(-1)  # (batch, d_model)
+        h = self.output_projection(h)
+
+        return h
+
+
+class PatchTSTOnlyModel(nn.Module):
+    """Time series model using PatchTST encoder.
+
+    Divides input into subseries-level patches, applies Transformer
+    on patch tokens for efficient long-range dependency modeling.
+
+    Args:
+        num_input_variables: Number of input variables.
+        input_sequence_length: Length of input sequence.
+        num_target_variables: Number of target variables.
+        target_sequence_length: Length of prediction sequence.
+        d_model: Feature dimension.
+        patch_len: Patch length.
+        patch_stride: Stride between patches.
+        nhead: Attention heads.
+        num_layers: Transformer layers.
+        dim_feedforward: Feedforward dimension.
+        dropout: Dropout rate.
+    """
+
+    def __init__(
+        self,
+        num_input_variables: int,
+        input_sequence_length: int,
+        num_target_variables: int,
+        target_sequence_length: int,
+        d_model: int = 128,
+        patch_len: int = 16,
+        patch_stride: int = 8,
+        nhead: int = 4,
+        num_layers: int = 2,
+        dim_feedforward: int = 256,
+        dropout: float = 0.1,
+    ):
+        super().__init__()
+
+        if num_target_variables <= 0 or target_sequence_length <= 0:
+            raise ValueError("Target variables and sequence length must be positive")
+
+        self.num_target_variables = num_target_variables
+        self.target_sequence_length = target_sequence_length
+
+        self.encoder = PatchTransformerEncoder(
+            num_input_variables=num_input_variables,
+            input_sequence_length=input_sequence_length,
+            d_model=d_model,
+            patch_len=patch_len,
+            patch_stride=patch_stride,
+            nhead=nhead,
+            num_layers=num_layers,
+            dim_feedforward=dim_feedforward,
+            dropout=dropout,
+        )
+
+        # Regression head (identical to other models)
+        self.regression_head = nn.Sequential(
+            nn.Linear(d_model, d_model // 2),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(d_model // 2, target_sequence_length * num_target_variables)
+        )
+
+    def forward(
+        self,
+        solar_wind_input: torch.Tensor,
+        image_input: Optional[torch.Tensor] = None,
+        return_features: bool = False
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor, None]]:
+        """Forward pass."""
+        features = self.encoder(solar_wind_input)
+        predictions = self.regression_head(features)
+        output = predictions.reshape(
+            predictions.size(0),
+            self.target_sequence_length,
+            self.num_target_variables
+        )
+        if return_features:
+            return output, features, None
+        return output
+
+
 class BaselineModel(nn.Module):
     """Baseline fusion model with Conv3D + Linear encoders.
 
@@ -2101,6 +2457,9 @@ def create_model(config):
 
     elif model_type == "gnn":
         # GNN model with pluggable temporal encoder
+        # Build node groups dynamically from config (with validation)
+        gnn_group_sizes, gnn_num_nodes = build_gnn_node_groups(config)
+
         gnn_temporal_type = getattr(config.model, 'gnn_temporal_type', 'transformer')
         gnn_node_feature_dim = getattr(config.model, 'gnn_node_feature_dim', 32)
         gnn_gcn_hidden_dim = getattr(config.model, 'gnn_gcn_hidden_dim', 64)
@@ -2115,6 +2474,8 @@ def create_model(config):
         tcn_kernel_size = getattr(config.model, 'tcn_kernel_size', 3)
         bilstm_hidden_size = getattr(config.model, 'bilstm_hidden_size', 128)
         bilstm_num_layers = getattr(config.model, 'bilstm_num_layers', 2)
+        patch_len = getattr(config.model, 'patch_len', 16)
+        patch_stride = getattr(config.model, 'patch_stride', 8)
 
         model = GNNOnlyModel(
             num_input_variables=num_input_variables,
@@ -2122,6 +2483,8 @@ def create_model(config):
             num_target_variables=num_target_variables,
             target_sequence_length=target_sequence_length,
             d_model=config.model.d_model,
+            gnn_group_sizes=gnn_group_sizes,
+            gnn_num_nodes=gnn_num_nodes,
             gnn_node_feature_dim=gnn_node_feature_dim,
             gnn_gcn_hidden_dim=gnn_gcn_hidden_dim,
             gnn_num_gcn_layers=gnn_num_gcn_layers,
@@ -2135,10 +2498,12 @@ def create_model(config):
             tcn_kernel_size=tcn_kernel_size,
             bilstm_hidden_size=bilstm_hidden_size,
             bilstm_num_layers=bilstm_num_layers,
+            patch_len=patch_len,
+            patch_stride=patch_stride,
         )
         print(f"  GNN temporal encoder: {gnn_temporal_type}")
-        print(f"  GNN: {gnn_num_gcn_layers} GCN layers, "
-              f"node_feat={gnn_node_feature_dim}, gcn_hidden={gnn_gcn_hidden_dim}")
+        print(f"  GNN: {gnn_num_gcn_layers} GCN layers, {gnn_num_nodes} nodes, "
+              f"groups={gnn_group_sizes}")
         return model
 
     elif model_type == "timesnet":
@@ -2170,11 +2535,37 @@ def create_model(config):
               f"cross_variable={tn_cross_var}")
         return model
 
+    elif model_type == "patchtst":
+        # PatchTST model (patch-based Transformer)
+        patch_len = getattr(config.model, 'patch_len', 16)
+        patch_stride = getattr(config.model, 'patch_stride', 8)
+        pt_dropout = getattr(config.model, 'patchtst_dropout', 0.1)
+
+        model = PatchTSTOnlyModel(
+            num_input_variables=num_input_variables,
+            input_sequence_length=input_sequence_length,
+            num_target_variables=num_target_variables,
+            target_sequence_length=target_sequence_length,
+            d_model=config.model.d_model,
+            patch_len=patch_len,
+            patch_stride=patch_stride,
+            nhead=config.model.transformer_nhead,
+            num_layers=config.model.transformer_num_layers,
+            dim_feedforward=config.model.transformer_dim_feedforward,
+            dropout=pt_dropout,
+        )
+        # Calculate num patches for info
+        pad = (patch_stride - (input_sequence_length - patch_len) % patch_stride) % patch_stride
+        n_patches = (input_sequence_length + pad - patch_len) // patch_stride + 1
+        print(f"  PatchTST: patch_len={patch_len}, stride={patch_stride}, "
+              f"num_patches={n_patches}")
+        return model
+
     else:
         raise ValueError(
             f"Unknown model_type: {model_type}. "
             f"Choose from: convlstm, transformer, fusion, baseline, "
-            f"linear, tcn, gnn, timesnet"
+            f"linear, tcn, gnn, timesnet, patchtst"
         )
 
 
