@@ -1,121 +1,164 @@
 #!/bin/bash
-# Batch validation script for experiment analysis
-# Usage: ./validation.sh <version> [model_types...]
+# Parallel validation for all experiment configs.
 #
-# Arguments:
-#   version     - Experiment version number (e.g., 7 for baseline_v7, fusion_v7)
-#   model_types - (Optional) Space-separated list of model types to validate
-#                 Valid types: baseline, fusion, transformer
-#                 Default: baseline fusion
+# Runs up to MAX_JOBS validation processes concurrently.
+# When one finishes, the next config in the queue starts automatically.
 #
-# This script runs validation for:
-#   - Epochs: 5, 10, 15, 20, 25, best
-#   - Models: {model_type}_vN for each specified model type
-#
-# Examples:
-#   ./validation.sh 7                    # Validates baseline_v7 and fusion_v7
-#   ./validation.sh 9 transformer        # Validates transformer_v9 only
-#   ./validation.sh 8 baseline fusion    # Validates baseline_v8 and fusion_v8
-#   ./validation.sh 10 transformer fusion # Validates transformer_v10 and fusion_v10
+# Usage:
+#   ./validation.sh                        # Run all 81 configs, epoch=best
+#   ./validation.sh --epoch 10             # Use epoch 10
+#   ./validation.sh --max-jobs 4           # Limit to 4 parallel jobs
+#   ./validation.sh --filter out12h        # Only configs matching "out12h"
+#   ./validation.sh --dry-run              # Print configs without running
 
-set -e  # Exit on error
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
 
 # =============================================================================
 # Arguments
 # =============================================================================
-VERSION=${1:-}
+MAX_JOBS=8
+FILTER=""
+DRY_RUN=false
+EPOCH="best"
 
-if [ -z "$VERSION" ]; then
-    echo "Error: Version number required"
-    echo "Usage: ./validation.sh <version> [model_types...]"
-    echo ""
-    echo "Model types: baseline, fusion, transformer"
-    echo ""
-    echo "Examples:"
-    echo "  ./validation.sh 7                    # baseline_v7, fusion_v7"
-    echo "  ./validation.sh 9 transformer        # transformer_v9 only"
-    echo "  ./validation.sh 8 baseline fusion    # baseline_v8, fusion_v8"
-    exit 1
-fi
-
-# Shift to get model types (remaining arguments)
-shift
-
-# =============================================================================
-# Configuration
-# =============================================================================
-EPOCHS=(5 10 15 20 25)
-
-# If model types provided, use them; otherwise default to baseline and fusion
-if [ $# -gt 0 ]; then
-    MODELS=("$@")
-else
-    MODELS=("baseline" "fusion")
-fi
-
-# Validate model types
-for MODEL in "${MODELS[@]}"; do
-    case $MODEL in
-        baseline|fusion|transformer|linear|tcn)
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --max-jobs)
+            MAX_JOBS="$2"
+            shift 2
+            ;;
+        --filter)
+            FILTER="$2"
+            shift 2
+            ;;
+        --epoch)
+            EPOCH="$2"
+            shift 2
+            ;;
+        --dry-run)
+            DRY_RUN=true
+            shift
             ;;
         *)
-            echo "Error: Unknown model type '$MODEL'"
-            echo "Valid options: baseline, fusion, transformer, linear, tcn"
+            echo "Unknown option: $1"
+            echo "Usage: ./validation.sh [--epoch EPOCH] [--max-jobs N] [--filter PATTERN] [--dry-run]"
             exit 1
             ;;
     esac
 done
 
 # =============================================================================
-# Run Validation
+# Collect configs
 # =============================================================================
+CONFIGS=()
+for f in configs/in[123]d_out*.yaml; do
+    name=$(basename "$f" .yaml)
+    if [[ -n "$FILTER" && ! "$name" =~ $FILTER ]]; then
+        continue
+    fi
+    CONFIGS+=("$name")
+done
+
+IFS=$'\n' CONFIGS=($(sort <<<"${CONFIGS[*]}")); unset IFS
+
+TOTAL=${#CONFIGS[@]}
+if [[ $TOTAL -eq 0 ]]; then
+    echo "No configs found (filter: '$FILTER')"
+    exit 1
+fi
+
 echo "========================================"
-echo "Batch Validation for v${VERSION}"
+echo "Parallel Validation Runner"
 echo "========================================"
-echo "Models: ${MODELS[*]/%/_v${VERSION}}"
-echo "Epochs: ${EPOCHS[*]}, best"
+echo "Total configs: $TOTAL"
+echo "Max parallel:  $MAX_JOBS"
+echo "Epoch:         $EPOCH"
+echo "Filter:        ${FILTER:-none}"
 echo "========================================"
 echo ""
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+if $DRY_RUN; then
+    echo "[DRY RUN] Configs to validate:"
+    for cfg in "${CONFIGS[@]}"; do
+        echo "  $cfg (epoch=$EPOCH)"
+    done
+    echo ""
+    echo "Total: $TOTAL configs"
+    exit 0
+fi
 
 # =============================================================================
-# Experiment-specific model type overrides
-# Some experiments were trained with a different model_type than their name suggests
+# Validation loop
 # =============================================================================
-get_actual_model_type() {
-    local EXP_NAME=$1
-    local DEFAULT_MODEL=$2
+LOG_DIR="$HOME/tmp/validation_logs"
+mkdir -p "$LOG_DIR"
 
-    # Check for known mismatches (experiment trained with different model type)
-    case $EXP_NAME in
-        baseline_v11)
-            # v11 was accidentally trained as fusion
-            echo "fusion"
-            ;;
-        *)
-            echo "$DEFAULT_MODEL"
-            ;;
-    esac
+RUNNING_PIDS=()
+RUNNING_NAMES=()
+COMPLETED=0
+FAILED=0
+STARTED=0
+
+wait_for_slot() {
+    while [[ ${#RUNNING_PIDS[@]} -ge $MAX_JOBS ]]; do
+        NEW_PIDS=()
+        NEW_NAMES=()
+        for i in "${!RUNNING_PIDS[@]}"; do
+            pid=${RUNNING_PIDS[$i]}
+            name=${RUNNING_NAMES[$i]}
+            if kill -0 "$pid" 2>/dev/null; then
+                NEW_PIDS+=("$pid")
+                NEW_NAMES+=("$name")
+            else
+                wait "$pid"
+                code=$?
+                COMPLETED=$((COMPLETED + 1))
+                if [[ $code -eq 0 ]]; then
+                    echo "[DONE]  $name  ($COMPLETED/$TOTAL completed)"
+                else
+                    echo "[FAIL]  $name  (exit $code) — see $LOG_DIR/${name}.log"
+                    FAILED=$((FAILED + 1))
+                fi
+            fi
+        done
+        RUNNING_PIDS=("${NEW_PIDS[@]}")
+        RUNNING_NAMES=("${NEW_NAMES[@]}")
+
+        if [[ ${#RUNNING_PIDS[@]} -ge $MAX_JOBS ]]; then
+            sleep 5
+        fi
+    done
 }
 
-# Run for each epoch
-for EPOCH in "${EPOCHS[@]}"; do
-    for MODEL in "${MODELS[@]}"; do
-        EXP_NAME="${MODEL}_v${VERSION}"
-        ACTUAL_MODEL=$(get_actual_model_type "$EXP_NAME" "$MODEL")
-        echo "[${MODEL}] Epoch ${EPOCH}..."
-        ./run_analysis.sh "$ACTUAL_MODEL" "$EPOCH" "$EXP_NAME" 2>/dev/null || echo "  Skipped (checkpoint not found)"
-    done
+for cfg in "${CONFIGS[@]}"; do
+    wait_for_slot
+
+    STARTED=$((STARTED + 1))
+    echo "[START] $cfg  ($STARTED/$TOTAL, running: ${#RUNNING_PIDS[@]}+1)"
+
+    python scripts/validate.py --config-name="$cfg" validation.epoch="$EPOCH" \
+        > "$LOG_DIR/${cfg}.log" 2>&1 &
+
+    RUNNING_PIDS+=($!)
+    RUNNING_NAMES+=("$cfg")
 done
 
-# Run for best epoch
-for MODEL in "${MODELS[@]}"; do
-    EXP_NAME="${MODEL}_v${VERSION}"
-    ACTUAL_MODEL=$(get_actual_model_type "$EXP_NAME" "$MODEL")
-    echo "[${MODEL}] Epoch best..."
-    ./run_analysis.sh "$ACTUAL_MODEL" "best" "$EXP_NAME"
+# Wait for remaining jobs
+for i in "${!RUNNING_PIDS[@]}"; do
+    pid=${RUNNING_PIDS[$i]}
+    name=${RUNNING_NAMES[$i]}
+    wait "$pid"
+    code=$?
+    COMPLETED=$((COMPLETED + 1))
+    if [[ $code -eq 0 ]]; then
+        echo "[DONE]  $name  ($COMPLETED/$TOTAL completed)"
+    else
+        echo "[FAIL]  $name  (exit $code) — see $LOG_DIR/${name}.log"
+        FAILED=$((FAILED + 1))
+    fi
 done
 
 # =============================================================================
@@ -123,15 +166,20 @@ done
 # =============================================================================
 echo ""
 echo "========================================"
-echo "Validation completed for v${VERSION}"
+echo "Validation Complete"
 echo "========================================"
-echo ""
-echo "Results saved to:"
-for MODEL in "${MODELS[@]}"; do
-    echo "  ${MODEL}_v${VERSION}/validation/"
-done
-echo ""
-echo "Best results:"
-for MODEL in "${MODELS[@]}"; do
-    echo "  ${MODEL}_v${VERSION}/validation/best/validation_results.txt"
-done
+echo "Total:     $TOTAL"
+echo "Succeeded: $((COMPLETED - FAILED))"
+echo "Failed:    $FAILED"
+echo "Epoch:     $EPOCH"
+echo "Logs:      $LOG_DIR/"
+echo "========================================"
+
+if [[ $FAILED -gt 0 ]]; then
+    echo ""
+    echo "Failed configs:"
+    grep -l "Error\|Exception\|Traceback" "$LOG_DIR"/*.log 2>/dev/null | while read f; do
+        echo "  $(basename "$f" .log)"
+    done
+    exit 1
+fi

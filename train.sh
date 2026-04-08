@@ -1,152 +1,180 @@
 #!/bin/bash
-# Training script for solar wind prediction experiments
-# Usage: ./train.sh <experiment> [model_type]
+# Parallel training for all experiment configs.
 #
-# Arguments:
-#   experiment  - Experiment name/version (e.g., v11, baseline_v11)
-#   model_type  - (Optional) Model type override: baseline, fusion, transformer, linear
+# Runs up to MAX_JOBS training processes concurrently.
+# When one finishes, the next config in the queue starts automatically.
 #
-# Examples:
-#   ./train.sh v11                  # Train fusion_v11 (default model type)
-#   ./train.sh v11 baseline         # Train baseline_v11
-#   ./train.sh v11 fusion           # Train fusion_v11
-#   ./train.sh v11b baseline        # Train baseline_v11b (variant)
+# Usage:
+#   ./train.sh                    # Run all 81 configs (default)
+#   ./train.sh --max-jobs 4       # Limit to 4 parallel jobs
+#   ./train.sh --filter out12h    # Only configs matching "out12h"
+#   ./train.sh --dry-run          # Print configs without running
 
-set -e  # Exit on error
-
-# =============================================================================
-# Arguments
-# =============================================================================
-EXPERIMENT=${1:-}
-MODEL_TYPE=${2:-transformer}  # Default to transformer (CSV timeseries mode)
-
-if [ -z "$EXPERIMENT" ]; then
-    echo "Error: Experiment name required"
-    echo "Usage: ./train.sh <experiment> [model_type]"
-    echo ""
-    echo "Model types: baseline, fusion, transformer, linear"
-    echo ""
-    echo "Examples:"
-    echo "  ./train.sh v11                  # fusion_v11"
-    echo "  ./train.sh v11 baseline         # baseline_v11"
-    echo "  ./train.sh v11b baseline        # baseline_v11b (variant)"
-    exit 1
-fi
-
-# Validate model type
-case $MODEL_TYPE in
-    baseline|fusion|transformer|linear|tcn)
-        ;;
-    *)
-        echo "Error: Unknown model_type '$MODEL_TYPE'"
-        echo "Valid options: baseline, fusion, transformer, linear, tcn"
-        exit 1
-        ;;
-esac
-
-# Construct experiment name
-EXP_NAME="${MODEL_TYPE}_${EXPERIMENT}"
-
-# =============================================================================
-# Experiment Configurations
-# =============================================================================
-# Base options for all experiments
-BASE_OPTS="experiment.name=$EXP_NAME model.model_type=$MODEL_TYPE"
-
-# Experiment-specific configurations
-case $EXPERIMENT in
-    v11|v11a)
-        # Phase 1: Overfitting Fix (all improvements)
-        EXTRA_OPTS="
-            training.lr_warmup.enable=true
-            training.lr_warmup.warmup_epochs=5
-            training.lr_warmup.warmup_start_factor=0.1
-            training.scheduler_type=cosine_annealing
-            training.gradient_accumulation_steps=4
-            training.early_stopping_patience=15
-        "
-        ;;
-    v11b)
-        # Phase 1 variant: LR Warmup + Cosine Annealing only (no gradient accumulation)
-        EXTRA_OPTS="
-            training.lr_warmup.enable=true
-            training.lr_warmup.warmup_epochs=3
-            training.lr_warmup.warmup_start_factor=0.1
-            training.scheduler_type=cosine_annealing
-            training.gradient_accumulation_steps=1
-            training.early_stopping_patience=15
-        "
-        ;;
-    v11c)
-        # Phase 1 variant: Cosine Annealing only
-        EXTRA_OPTS="
-            training.lr_warmup.enable=false
-            training.scheduler_type=cosine_annealing
-            training.gradient_accumulation_steps=1
-            training.early_stopping_patience=15
-        "
-        ;;
-    v12)
-        # Phase 2: Data Augmentation (placeholder)
-        EXTRA_OPTS="
-            training.lr_warmup.enable=true
-            training.scheduler_type=cosine_annealing
-            training.early_stopping_patience=15
-        "
-        ;;
-    v13|v13a)
-        # Phase 3: TCN Encoder (default config)
-        # Note: model_type override required: ./train.sh v13 tcn
-        EXTRA_OPTS="
-            model.tcn_channels=[64,128,256]
-            model.tcn_kernel_size=3
-            model.tcn_dropout=0.1
-        "
-        ;;
-    v13b)
-        # Phase 3 variant: Deeper TCN (4 layers)
-        EXTRA_OPTS="
-            model.tcn_channels=[64,128,256,512]
-            model.tcn_kernel_size=3
-            model.tcn_dropout=0.1
-        "
-        ;;
-    v13c)
-        # Phase 3 variant: Larger kernel (kernel=5)
-        EXTRA_OPTS="
-            model.tcn_channels=[64,128,256]
-            model.tcn_kernel_size=5
-            model.tcn_dropout=0.1
-        "
-        ;;
-    *)
-        # Default: No extra options
-        EXTRA_OPTS=""
-        ;;
-esac
-
-# =============================================================================
-# Run Training
-# =============================================================================
-echo "========================================"
-echo "Training: $EXP_NAME"
-echo "========================================"
-echo "Model type: $MODEL_TYPE"
-echo "Experiment: $EXPERIMENT"
-echo "========================================"
-echo ""
+set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# Build and run command
-CMD="python scripts/train.py --config-name=local $BASE_OPTS $EXTRA_OPTS"
-echo "Command: $CMD"
+# =============================================================================
+# Arguments
+# =============================================================================
+MAX_JOBS=8
+FILTER=""
+DRY_RUN=false
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --max-jobs)
+            MAX_JOBS="$2"
+            shift 2
+            ;;
+        --filter)
+            FILTER="$2"
+            shift 2
+            ;;
+        --dry-run)
+            DRY_RUN=true
+            shift
+            ;;
+        *)
+            echo "Unknown option: $1"
+            echo "Usage: ./train.sh [--max-jobs N] [--filter PATTERN] [--dry-run]"
+            exit 1
+            ;;
+    esac
+done
+
+# =============================================================================
+# Collect configs
+# =============================================================================
+CONFIGS=()
+for f in configs/in[123]d_out*.yaml; do
+    name=$(basename "$f" .yaml)
+    if [[ -n "$FILTER" && ! "$name" =~ $FILTER ]]; then
+        continue
+    fi
+    CONFIGS+=("$name")
+done
+
+# Sort for consistent ordering
+IFS=$'\n' CONFIGS=($(sort <<<"${CONFIGS[*]}")); unset IFS
+
+TOTAL=${#CONFIGS[@]}
+if [[ $TOTAL -eq 0 ]]; then
+    echo "No configs found (filter: '$FILTER')"
+    exit 1
+fi
+
+echo "========================================"
+echo "Parallel Training Runner"
+echo "========================================"
+echo "Total configs: $TOTAL"
+echo "Max parallel:  $MAX_JOBS"
+echo "Filter:        ${FILTER:-none}"
+echo "========================================"
 echo ""
 
-eval $CMD
+if $DRY_RUN; then
+    echo "[DRY RUN] Configs to run:"
+    for cfg in "${CONFIGS[@]}"; do
+        echo "  $cfg"
+    done
+    echo ""
+    echo "Total: $TOTAL configs"
+    exit 0
+fi
 
+# =============================================================================
+# Training loop
+# =============================================================================
+LOG_DIR="$HOME/tmp/train_logs"
+mkdir -p "$LOG_DIR"
+
+RUNNING_PIDS=()
+RUNNING_NAMES=()
+COMPLETED=0
+FAILED=0
+STARTED=0
+
+# Wait for a slot to open (any one job finishes)
+wait_for_slot() {
+    while [[ ${#RUNNING_PIDS[@]} -ge $MAX_JOBS ]]; do
+        NEW_PIDS=()
+        NEW_NAMES=()
+        for i in "${!RUNNING_PIDS[@]}"; do
+            pid=${RUNNING_PIDS[$i]}
+            name=${RUNNING_NAMES[$i]}
+            if kill -0 "$pid" 2>/dev/null; then
+                NEW_PIDS+=("$pid")
+                NEW_NAMES+=("$name")
+            else
+                wait "$pid"
+                code=$?
+                COMPLETED=$((COMPLETED + 1))
+                if [[ $code -eq 0 ]]; then
+                    echo "[DONE]  $name  ($COMPLETED/$TOTAL completed)"
+                else
+                    echo "[FAIL]  $name  (exit $code) — see $LOG_DIR/${name}.log"
+                    FAILED=$((FAILED + 1))
+                fi
+            fi
+        done
+        RUNNING_PIDS=("${NEW_PIDS[@]}")
+        RUNNING_NAMES=("${NEW_NAMES[@]}")
+
+        if [[ ${#RUNNING_PIDS[@]} -ge $MAX_JOBS ]]; then
+            sleep 5
+        fi
+    done
+}
+
+# Launch all configs
+for cfg in "${CONFIGS[@]}"; do
+    wait_for_slot
+
+    STARTED=$((STARTED + 1))
+    echo "[START] $cfg  ($STARTED/$TOTAL, running: ${#RUNNING_PIDS[@]}+1)"
+
+    python scripts/train.py --config-name="$cfg" \
+        > "$LOG_DIR/${cfg}.log" 2>&1 &
+
+    RUNNING_PIDS+=($!)
+    RUNNING_NAMES+=("$cfg")
+done
+
+# Wait for remaining jobs
+for i in "${!RUNNING_PIDS[@]}"; do
+    pid=${RUNNING_PIDS[$i]}
+    name=${RUNNING_NAMES[$i]}
+    wait "$pid"
+    code=$?
+    COMPLETED=$((COMPLETED + 1))
+    if [[ $code -eq 0 ]]; then
+        echo "[DONE]  $name  ($COMPLETED/$TOTAL completed)"
+    else
+        echo "[FAIL]  $name  (exit $code) — see $LOG_DIR/${name}.log"
+        FAILED=$((FAILED + 1))
+    fi
+done
+
+# =============================================================================
+# Summary
+# =============================================================================
 echo ""
 echo "========================================"
-echo "Training completed: $EXP_NAME"
+echo "Training Complete"
 echo "========================================"
+echo "Total:     $TOTAL"
+echo "Succeeded: $((COMPLETED - FAILED))"
+echo "Failed:    $FAILED"
+echo "Logs:      $LOG_DIR/"
+echo "========================================"
+
+if [[ $FAILED -gt 0 ]]; then
+    echo ""
+    echo "Failed configs:"
+    grep -l "Error\|Exception\|Traceback" "$LOG_DIR"/*.log 2>/dev/null | while read f; do
+        echo "  $(basename "$f" .log)"
+    done
+    exit 1
+fi
