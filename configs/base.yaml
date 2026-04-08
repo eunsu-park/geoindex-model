@@ -141,7 +141,19 @@ data:
       - "bt_min"
       - "bt_max"
       - "ap30"
-      - "hp30"
+
+    # GNN node grouping (explicit mapping of input variables to graph nodes)
+    # Each key = node name, value = list of input variables assigned to that node
+    # Validated at model creation: all input_variables must be covered, order must match
+    gnn_variable_groups:
+      v: ["v_avg", "v_min", "v_max"]
+      np: ["np_avg", "np_min", "np_max"]
+      t: ["t_avg", "t_min", "t_max"]
+      bx: ["bx_avg", "bx_min", "bx_max"]
+      by: ["by_avg", "by_min", "by_max"]
+      bz: ["bz_avg", "bz_min", "bz_max"]
+      bt: ["bt_avg", "bt_min", "bt_max"]
+      ap30: ["ap30"]
 
     # Data augmentation (training only)
     augmentation:
@@ -349,6 +361,11 @@ model:
   timesnet_num_kernels: 3           # Number of parallel Inception conv branches
   timesnet_dropout: 0.1
   timesnet_cross_variable: true     # Enable cross-variable mixing (addresses channel-independent limitation)
+
+  # PatchTST (Patch-based Transformer)
+  patch_len: 16                     # Timesteps per patch
+  patch_stride: 8                   # Stride between patches (overlap = patch_len - stride)
+  patchtst_dropout: 0.1
 
   # Output sequence length
   # Auto-computed from data config if null, or override manually
