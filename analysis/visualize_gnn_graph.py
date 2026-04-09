@@ -158,6 +158,9 @@ def main():
                                 'in2d_out24h_gnn_transformer',
                         help='Comma-separated experiment names '
                              '(full names, e.g., in2d_out12h_gnn_transformer)')
+    parser.add_argument('--epoch', default='best',
+                        help='Checkpoint epoch: "best", "final", or number '
+                             '(e.g., 10 → model_epoch_0010.pth)')
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -167,9 +170,17 @@ def main():
     valid_configs = []
     stats_lines = []
 
+    # Resolve checkpoint filename from --epoch
+    if args.epoch == 'best':
+        ckpt_filename = 'model_best.pth'
+    elif args.epoch == 'final':
+        ckpt_filename = 'model_final.pth'
+    else:
+        ckpt_filename = f'model_epoch_{int(args.epoch):04d}.pth'
+
     for exp_name in configs:
         ckpt_path = os.path.join(
-            args.results_dir, exp_name, 'checkpoint', 'model_best.pth'
+            args.results_dir, exp_name, 'checkpoint', ckpt_filename
         )
 
         if not os.path.exists(ckpt_path):
