@@ -152,10 +152,12 @@ def main():
     )
     parser.add_argument('--results-dir', required=True)
     parser.add_argument('--output-dir', default='./gnn_graphs')
-    parser.add_argument('--configs', default='in2d_out6h,in2d_out12h,in2d_out24h',
-                        help='Comma-separated config bases')
-    parser.add_argument('--temporal-type', default='gnn_transformer',
-                        help='GNN temporal type suffix')
+    parser.add_argument('--configs',
+                        default='in2d_out6h_gnn_transformer,'
+                                'in2d_out12h_gnn_transformer,'
+                                'in2d_out24h_gnn_transformer',
+                        help='Comma-separated experiment names '
+                             '(full names, e.g., in2d_out12h_gnn_transformer)')
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -165,8 +167,7 @@ def main():
     valid_configs = []
     stats_lines = []
 
-    for cfg in configs:
-        exp_name = f"{cfg}_{args.temporal_type}"
+    for exp_name in configs:
         ckpt_path = os.path.join(
             args.results_dir, exp_name, 'checkpoint', 'model_best.pth'
         )
@@ -178,7 +179,7 @@ def main():
         print(f"  Loading: {exp_name}")
         adj = extract_adjacency(ckpt_path)
         adjs.append(adj)
-        valid_configs.append(cfg)
+        valid_configs.append(exp_name)
 
         # Individual heatmap
         save_path = os.path.join(args.output_dir, f'gnn_graph_{exp_name}.png')
