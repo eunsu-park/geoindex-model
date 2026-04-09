@@ -1,15 +1,16 @@
 #!/bin/bash
 # Parallel validation for all experiment configs.
 #
-# Runs up to MAX_JOBS validation processes concurrently.
+# Runs up to MAX_JOBS processes concurrently.
 # When one finishes, the next config in the queue starts automatically.
 #
 # Usage:
-#   ./validation.sh                        # Run all 81 configs, epoch=best
-#   ./validation.sh --epoch 10             # Use epoch 10
-#   ./validation.sh --max-jobs 4           # Limit to 4 parallel jobs
-#   ./validation.sh --filter out12h        # Only configs matching "out12h"
-#   ./validation.sh --dry-run              # Print configs without running
+#   ./validation.sh                           # Run all configs, epoch=best
+#   ./validation.sh --config-file list.txt    # Run configs from file
+#   ./validation.sh --max-jobs 4              # Limit to 4 parallel jobs
+#   ./validation.sh --filter out12h           # Only configs matching "out12h"
+#   ./validation.sh --dry-run                 # Print configs without running
+#   ./validation.sh --epoch 10              # Use epoch 10
 
 set -e
 
@@ -20,6 +21,7 @@ cd "$SCRIPT_DIR"
 # Arguments
 # =============================================================================
 MAX_JOBS=8
+CONFIG_FILE=""
 FILTER=""
 DRY_RUN=false
 EPOCH="best"
@@ -30,21 +32,25 @@ while [[ $# -gt 0 ]]; do
             MAX_JOBS="$2"
             shift 2
             ;;
-        --filter)
-            FILTER="$2"
+        --config-file)
+            CONFIG_FILE="$2"
             shift 2
             ;;
-        --epoch)
-            EPOCH="$2"
+        --filter)
+            FILTER="$2"
             shift 2
             ;;
         --dry-run)
             DRY_RUN=true
             shift
             ;;
+        --epoch)
+            EPOCH="$2"
+            shift 2
+            ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: ./validation.sh [--epoch EPOCH] [--max-jobs N] [--filter PATTERN] [--dry-run]"
+            echo "Usage: ./validation.sh [--config-file FILE] [--max-jobs N] [--filter PATTERN] [--dry-run] [--epoch EPOCH]"
             exit 1
             ;;
     esac
@@ -54,19 +60,29 @@ done
 # Collect configs
 # =============================================================================
 CONFIGS=()
-for f in configs/in[123]d_out*.yaml; do
-    name=$(basename "$f" .yaml)
-    if [[ -n "$FILTER" && ! "$name" =~ $FILTER ]]; then
-        continue
-    fi
-    CONFIGS+=("$name")
-done
 
-IFS=$'\n' CONFIGS=($(sort <<<"${CONFIGS[*]}")); unset IFS
+if [[ -n "$CONFIG_FILE" ]]; then
+    # Read from file (skip empty lines and comments)
+    while IFS= read -r line; do
+        line=$(echo "$line" | sed 's/#.*//' | xargs)
+        [[ -z "$line" ]] && continue
+        CONFIGS+=("$line")
+    done < "$CONFIG_FILE"
+else
+    # Glob from configs/ directory
+    for f in configs/in[123]d_out*.yaml; do
+        name=$(basename "$f" .yaml)
+        if [[ -n "$FILTER" && ! "$name" =~ $FILTER ]]; then
+            continue
+        fi
+        CONFIGS+=("$name")
+    done
+    IFS=$'\n' CONFIGS=($(sort <<<"${CONFIGS[*]}")); unset IFS
+fi
 
 TOTAL=${#CONFIGS[@]}
 if [[ $TOTAL -eq 0 ]]; then
-    echo "No configs found (filter: '$FILTER')"
+    echo "No configs found (config-file: '$CONFIG_FILE', filter: '$FILTER')"
     exit 1
 fi
 
@@ -75,15 +91,15 @@ echo "Parallel Validation Runner"
 echo "========================================"
 echo "Total configs: $TOTAL"
 echo "Max parallel:  $MAX_JOBS"
+echo "Source:        ${CONFIG_FILE:-glob (filter: ${FILTER:-none})}"
 echo "Epoch:         $EPOCH"
-echo "Filter:        ${FILTER:-none}"
 echo "========================================"
 echo ""
 
 if $DRY_RUN; then
-    echo "[DRY RUN] Configs to validate:"
+    echo "[DRY RUN] Configs to run:"
     for cfg in "${CONFIGS[@]}"; do
-        echo "  $cfg (epoch=$EPOCH)"
+        echo "  $cfg"
     done
     echo ""
     echo "Total: $TOTAL configs"
@@ -91,7 +107,7 @@ if $DRY_RUN; then
 fi
 
 # =============================================================================
-# Validation loop
+# Parallel execution
 # =============================================================================
 LOG_DIR="$HOME/tmp/validation_logs"
 mkdir -p "$LOG_DIR"
@@ -146,7 +162,6 @@ for cfg in "${CONFIGS[@]}"; do
     RUNNING_NAMES+=("$cfg")
 done
 
-# Wait for remaining jobs
 for i in "${!RUNNING_PIDS[@]}"; do
     pid=${RUNNING_PIDS[$i]}
     name=${RUNNING_NAMES[$i]}
@@ -171,7 +186,6 @@ echo "========================================"
 echo "Total:     $TOTAL"
 echo "Succeeded: $((COMPLETED - FAILED))"
 echo "Failed:    $FAILED"
-echo "Epoch:     $EPOCH"
 echo "Logs:      $LOG_DIR/"
 echo "========================================"
 

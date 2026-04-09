@@ -1,15 +1,16 @@
 #!/bin/bash
-# Parallel training for all experiment configs.
+# Parallel attention weight extraction for all experiment configs.
 #
 # Runs up to MAX_JOBS processes concurrently.
 # When one finishes, the next config in the queue starts automatically.
 #
 # Usage:
-#   ./train.sh                           # Run all configs (default)
-#   ./train.sh --config-file list.txt    # Run configs from file
-#   ./train.sh --max-jobs 4              # Limit to 4 parallel jobs
-#   ./train.sh --filter out12h           # Only configs matching "out12h"
-#   ./train.sh --dry-run                 # Print configs without running
+#   ./attention.sh                           # Run all configs, epoch=best
+#   ./attention.sh --config-file list.txt    # Run configs from file
+#   ./attention.sh --max-jobs 4              # Limit to 4 parallel jobs
+#   ./attention.sh --filter out12h           # Only configs matching "out12h"
+#   ./attention.sh --dry-run                 # Print configs without running
+#   ./attention.sh --epoch 10               # Use epoch 10
 
 set -e
 
@@ -23,6 +24,7 @@ MAX_JOBS=8
 CONFIG_FILE=""
 FILTER=""
 DRY_RUN=false
+EPOCH="best"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -42,9 +44,13 @@ while [[ $# -gt 0 ]]; do
             DRY_RUN=true
             shift
             ;;
+        --epoch)
+            EPOCH="$2"
+            shift 2
+            ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: ./train.sh [--config-file FILE] [--max-jobs N] [--filter PATTERN] [--dry-run]"
+            echo "Usage: ./attention.sh [--config-file FILE] [--max-jobs N] [--filter PATTERN] [--dry-run] [--epoch EPOCH]"
             exit 1
             ;;
     esac
@@ -81,11 +87,12 @@ if [[ $TOTAL -eq 0 ]]; then
 fi
 
 echo "========================================"
-echo "Parallel Training Runner"
+echo "Parallel Attention Analysis Runner"
 echo "========================================"
 echo "Total configs: $TOTAL"
 echo "Max parallel:  $MAX_JOBS"
 echo "Source:        ${CONFIG_FILE:-glob (filter: ${FILTER:-none})}"
+echo "Epoch:         $EPOCH"
 echo "========================================"
 echo ""
 
@@ -102,7 +109,7 @@ fi
 # =============================================================================
 # Parallel execution
 # =============================================================================
-LOG_DIR="$HOME/tmp/train_logs"
+LOG_DIR="$HOME/tmp/attention_logs"
 mkdir -p "$LOG_DIR"
 
 RUNNING_PIDS=()
@@ -148,7 +155,7 @@ for cfg in "${CONFIGS[@]}"; do
     STARTED=$((STARTED + 1))
     echo "[START] $cfg  ($STARTED/$TOTAL, running: ${#RUNNING_PIDS[@]}+1)"
 
-    python scripts/train.py --config-name="$cfg" \
+    python analysis/run_attention.py --config-name="$cfg" attention.epoch="$EPOCH" \
         > "$LOG_DIR/${cfg}.log" 2>&1 &
 
     RUNNING_PIDS+=($!)
@@ -174,7 +181,7 @@ done
 # =============================================================================
 echo ""
 echo "========================================"
-echo "Training Complete"
+echo "Attention Analysis Complete"
 echo "========================================"
 echo "Total:     $TOTAL"
 echo "Succeeded: $((COMPLETED - FAILED))"
