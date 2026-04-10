@@ -121,6 +121,32 @@ Examples / 예시:
 
 ---
 
+## Analysis / 분석
+
+Post-training analysis tools for model interpretability and evaluation.
+훈련 후 모델 해석 및 평가를 위한 분석 도구.
+
+See / 상세: [ANALYSIS.md](ANALYSIS.md)
+
+### Primary Analysis (require checkpoint + data) / 주요 분석 (체크포인트 + 데이터 필요)
+
+| Script | Shell | Description / 설명 |
+|--------|-------|-------------------|
+| `analysis/run_attention.py` | `./attention.sh` | Transformer attention weight extraction / Attention 가중치 추출 |
+| `analysis/run_mcd.py` | `./mcd.sh` | Monte Carlo Dropout uncertainty / MCD 불확실성 추정 |
+| `analysis/run_saliency.py` | `./saliency.sh` | Gradient-based saliency maps (SDO) / Saliency 맵 (SDO 전용) |
+
+### Post-hoc Evaluation (process existing results) / 사후 평가 (기존 결과 처리)
+
+| Script | Description / 설명 |
+|--------|-------------------|
+| `analysis/evaluate_storm_performance.py` | Storm-tier filtered MAE/RMSE / 폭풍 티어별 성능 |
+| `analysis/compare_predictions.py` | Multi-model prediction overlay plots / 다중 모델 예측 비교 플롯 |
+| `analysis/evaluate_mcd.py` | MCD coverage and calibration / MCD 커버리지 및 보정 |
+| `analysis/visualize_gnn_graph.py` | GNN learned adjacency heatmap / GNN 인접 행렬 시각화 |
+
+---
+
 ## Testing / 테스트
 
 ```bash
