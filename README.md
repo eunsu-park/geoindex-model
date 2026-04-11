@@ -20,20 +20,26 @@ Deep learning system for predicting the ap30 geomagnetic index using solar wind 
 ## Quick Start / 빠른 시작
 
 ```bash
-# Train all 81 experiments (9 models × 9 input/output combos)
-# 81개 전체 실험 훈련 (9모델 × 9 입출력 조합)
+# Using ap CLI (recommended) / ap CLI 사용 (권장)
+../ap train --profile standard           # GNN+Transformer, 2-day input, 12h output
+../ap train --profile quick              # Linear baseline, fast (~2 min)
+../ap validate --profile standard --epoch best
+../ap analyze attention --profile standard
+
+# Using Hydra config groups directly / Hydra 설정 그룹 직접 사용
+python scripts/train.py --config-name=local +io=in2d_out12h +model=gnn_transformer
+python scripts/train.py --config-name=local +io=in1d_out6h +model=linear
+
+# Train all 81 experiments / 81개 전체 실험 훈련
 ./train.sh
 
 # Train specific subset / 특정 부분만 훈련
 ./train.sh --filter out12h          # 12h output only
-./train.sh --filter gnn_transformer # GNN+Transformer only
+./train.sh --model transformer      # Transformer only
 ./train.sh --max-jobs 4             # Limit parallel jobs / 병렬 작업 제한
 
 # Validate all / 전체 검증
 ./validation.sh --epoch best
-
-# Train single model / 단일 모델 훈련
-python scripts/train.py --config-name=in2d_out12h_gnn_transformer
 ```
 
 ---
@@ -45,20 +51,27 @@ regression-sw/
 ├── configs/                # Hydra configuration files / Hydra 설정 파일
 │   ├── base.yaml           # Shared defaults / 공유 기본 설정
 │   ├── local.yaml          # Environment settings / 환경 설정
-│   ├── in{1,2,3}d_out{6,12,24}h.yaml     # Base I/O configs (Linear baseline)
-│   ├── in*_*_{model}.yaml  # Model-specific configs / 모델별 설정
-│   ├── archive/            # Old experiment configs / 이전 실험 설정
+│   ├── io/                 # I/O window configs (9) / 입출력 윈도우 설정
+│   │   ├── in1d_out6h.yaml ... in3d_out24h.yaml
+│   ├── model/              # Model configs (9) / 모델 설정
+│   │   ├── linear.yaml, transformer.yaml, gnn_transformer.yaml ...
+│   ├── archive/            # Legacy flat configs / 이전 flat 설정
 │   └── experiments/        # Experiment overrides / 실험 오버라이드
 ├── src/                    # Core modules / 핵심 모듈
-│   ├── pipeline.py         # Data loading, normalization / 데이터 로딩, 정규화
-│   ├── networks.py         # Model architectures / 모델 아키텍처
+│   ├── networks/           # Model architectures (package) / 모델 아키텍처 (패키지)
+│   │   ├── _registry.py    # @register_model decorator / 모델 레지스트리
+│   │   ├── transformer.py, tcn.py, gnn.py, patchtst.py ...
+│   ├── pipeline/           # Data loading (package) / 데이터 로딩 (패키지)
+│   │   ├── normalizer.py, readers.py, datasets_csv.py, factory.py ...
+│   ├── plotting.py         # Shared visualization / 공용 시각화
 │   ├── trainers.py         # Training loop / 훈련 루프
 │   ├── validators.py       # Validation loop / 검증 루프
 │   ├── testers.py          # Inference / 추론
-│   └── losses.py           # Loss functions / 손실 함수
+│   ├── losses.py           # Loss functions / 손실 함수
+│   └── utils.py            # Utilities / 유틸리티
 ├── scripts/                # Entry points / 실행 스크립트
 ├── analysis/               # Interpretability / 해석 도구 (attention, MCD)
-├── tests/                  # Unit tests / 단위 테스트
+├── tests/                  # Unit tests (156 tests) / 단위 테스트
 ├── train.sh                # Parallel training runner / 병렬 훈련 실행기
 ├── validation.sh           # Parallel validation runner / 병렬 검증 실행기
 ├── DATASET_GUIDE.md        # Data format docs / 데이터 형식 문서
@@ -108,16 +121,38 @@ See / 상세: [EXPERIMENTS.md](EXPERIMENTS.md)
 
 ---
 
-## Config Naming Convention / 설정 파일 명명 규칙
+## Config System / 설정 시스템
 
-```
-in{input_days}d_out{output_hours}h_{model_suffix}.yaml
+Hydra config groups compose I/O windows and models independently.
+Hydra 설정 그룹으로 I/O 윈도우와 모델을 독립적으로 조합합니다.
 
-Examples / 예시:
-  in2d_out12h.yaml                  → Linear baseline (2-day input, 12h output)
-  in2d_out12h_transformer.yaml      → Transformer
-  in2d_out12h_gnn_transformer.yaml  → GNN + Transformer
+```bash
+# Syntax / 문법:
+python scripts/train.py --config-name=local +io={window} +model={model}
+
+# Examples / 예시:
+python scripts/train.py --config-name=local +io=in2d_out12h +model=transformer
+python scripts/train.py --config-name=local +io=in1d_out6h +model=linear
+python scripts/train.py --config-name=local +io=in3d_out24h +model=gnn_patchtst
 ```
+
+| I/O Window | Input | Output | `+io=` |
+|------------|-------|--------|--------|
+| 1 day → 6h | 48 steps | 12 steps | `in1d_out6h` |
+| 2 days → 12h | 96 steps | 24 steps | `in2d_out12h` |
+| 3 days → 24h | 144 steps | 48 steps | `in3d_out24h` |
+
+| Model | `+model=` |
+|-------|-----------|
+| Linear | `linear` |
+| Transformer | `transformer` |
+| TCN | `tcn` |
+| PatchTST | `patchtst` |
+| TimesNet | `timesnet` |
+| GNN+Transformer | `gnn_transformer` |
+| GNN+TCN | `gnn_tcn` |
+| GNN+BiLSTM | `gnn_bilstm` |
+| GNN+PatchTST | `gnn_patchtst` |
 
 ---
 
