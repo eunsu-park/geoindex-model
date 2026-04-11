@@ -1,0 +1,28 @@
+
+=== Physical Validation: in2d_out6h_gnn_transformer ===
+    물리적 검증: in2d_out6h_gnn_transformer
+
+    Bz → ap30 : weight=0.0045, rank=8/8  (Southward IMF drives storms / 남향 IMF가 폭풍 유발)
+     V → ap30 : weight=0.0007, rank=8/8  (High-speed solar wind / 고속 태양풍)
+    Bt → ap30 : weight=0.0220, rank=8/8  (IMF magnitude / IMF 크기)
+
+  Top 5 strongest edges / 상위 5 엣지:
+      Np → T    : 0.9994
+       V → Bt   : 0.9811
+      Bz → Bx   : 0.9544
+    ap30 → Bt   : 0.8887
+       T → By   : 0.7457
+
+=== Physical Validation: in2d_out12h_gnn_transformer ===
+    물리적 검증: in2d_out12h_gnn_transformer
+
+    Bz → ap30 : weight=0.0035, rank=8/8  (Southward IMF drives storms / 남향 IMF가 폭풍 유발)
+     V → ap30 : weight=0.0009, rank=8/8  (High-speed solar wind / 고속 태양풍)
+    Bt → ap30 : weight=0.0213, rank=8/8  (IMF magnitude / IMF 크기)
+
+  Top 5 strongest edges / 상위 5 엣지:
+      Np → T    : 0.9991
+       V → Bt   : 0.9714
+      Bz → Bx   : 0.9654
+    ap30 → Bt   : 0.9117
+       T → By   : 0.6390
