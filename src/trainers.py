@@ -32,6 +32,8 @@ import torch.nn.functional as F
 import numpy as np
 import matplotlib.pyplot as plt
 
+from .plotting import plot_prediction_timeseries, denormalize_arrays
+
 
 class MetricsTracker:
     """Track and aggregate training metrics.
@@ -483,6 +485,8 @@ class Trainer:
         - Target (ground truth)
         - Prediction (model output)
 
+        Delegates to shared plot_prediction_timeseries() utility.
+
         Args:
             batch_idx: Current batch index for filename.
         """
@@ -494,87 +498,24 @@ class Trainer:
 
         try:
             # Get data from cache (first sample in batch)
-            inputs = self.last_batch_data['inputs'][0].cpu().numpy()  # (seq_len, num_vars)
-            targets = self.last_batch_data['targets'][0].cpu().numpy()  # (target_len, num_target_vars)
-            outputs = self.last_batch_output[0].cpu().numpy()  # (target_len, num_target_vars)
+            inputs = self.last_batch_data['inputs'][0].cpu().numpy()
+            targets = self.last_batch_data['targets'][0].cpu().numpy()
+            outputs = self.last_batch_output[0].cpu().numpy()
 
-            # Denormalize data if normalizer is available
-            if self.normalizer is not None:
-                # Denormalize inputs (variable by variable)
-                inputs = inputs.copy()
-                for var_idx, var_name in enumerate(self.input_variables):
-                    inputs[:, var_idx] = self.normalizer.denormalize_omni(
-                        inputs[:, var_idx], var_name
-                    )
-
-                # Denormalize targets and outputs (target variables)
-                targets = targets.copy()
-                outputs = outputs.copy()
-                for var_idx, var_name in enumerate(self.target_variables):
-                    targets[:, var_idx] = self.normalizer.denormalize_omni(
-                        targets[:, var_idx], var_name
-                    )
-                    outputs[:, var_idx] = self.normalizer.denormalize_omni(
-                        outputs[:, var_idx], var_name
-                    )
-
-            input_len = inputs.shape[0]
-            target_len = targets.shape[0]
-            num_target_vars = len(self.target_variables)
-
-            # Create figure with subplot for each target variable
-            fig, axes = plt.subplots(num_target_vars, 1, figsize=(14, 4 * num_target_vars))
-            if num_target_vars == 1:
-                axes = [axes]
-
-            for var_idx, target_var in enumerate(self.target_variables):
-                ax = axes[var_idx]
-
-                # Time axis
-                # Input: negative time steps, Target/Pred: positive time steps
-                input_time = np.arange(-input_len, 0)
-                target_time = np.arange(0, target_len)
-
-                # Plot input if target variable is in input
-                if target_var in self.target_in_input:
-                    input_var_idx = self.target_in_input[target_var]
-                    input_values = inputs[:, input_var_idx]
-                    ax.plot(input_time, input_values, 'b-', linewidth=1.5,
-                            label=f'Input ({target_var})', alpha=0.7)
-
-                # Plot target and prediction
-                target_values = targets[:, var_idx]
-                pred_values = outputs[:, var_idx]
-
-                ax.plot(target_time, target_values, 'g-', linewidth=2,
-                        label='Target (Ground Truth)', marker='o', markersize=3)
-                ax.plot(target_time, pred_values, 'r--', linewidth=2,
-                        label='Prediction', marker='x', markersize=4)
-
-                # Formatting
-                ax.axvline(x=0, color='gray', linestyle=':', alpha=0.5, label='Reference Time')
-                ax.set_xlabel('Time Step (relative)', fontsize=10)
-                ax.set_ylabel(f'{target_var}', fontsize=10)
-                ax.set_title(f'Epoch {self.current_epoch + 1}, Batch {batch_idx + 1} - {target_var}',
-                            fontsize=12, fontweight='bold')
-                ax.legend(loc='upper left', fontsize=9)
-                ax.grid(True, alpha=0.3)
-
-                # Add metrics
-                mae = np.abs(target_values - pred_values).mean()
-                rmse = np.sqrt(((target_values - pred_values) ** 2).mean())
-                ax.text(0.98, 0.95, f'MAE: {mae:.4f}\nRMSE: {rmse:.4f}',
-                        transform=ax.transAxes, fontsize=9, verticalalignment='top',
-                        horizontalalignment='right',
-                        bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
-
-            plt.tight_layout()
-
-            # Save plot
             filename = f"pred_epoch{self.current_epoch + 1:04d}_batch{batch_idx + 1:04d}.png"
             save_path = self.plot_dir / filename
-            plt.savefig(save_path, dpi=100, bbox_inches='tight')
-            plt.close()
+
+            plot_prediction_timeseries(
+                inputs=inputs,
+                predictions=outputs,
+                input_variables=self.input_variables,
+                target_variables=self.target_variables,
+                save_path=save_path,
+                targets=targets,
+                title=f'Epoch {self.current_epoch + 1}, Batch {batch_idx + 1}',
+                logger=self.logger,
+                normalizer=self.normalizer
+            )
 
         except Exception as e:
             if self.logger:

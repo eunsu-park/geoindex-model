@@ -22,123 +22,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-import matplotlib.pyplot as plt
 
-# Import save_plot from utils
-try:
-    from .utils import save_plot
-    SAVE_PLOT_AVAILABLE = True
-except ImportError:
-    SAVE_PLOT_AVAILABLE = False
+# Import shared plotting and utility functions
+from .plotting import plot_prediction_timeseries, extract_file_names, denormalize_arrays
 
-
-def plot_prediction_timeseries(
-    inputs: np.ndarray,
-    targets: np.ndarray,
-    predictions: np.ndarray,
-    input_variables: List[str],
-    target_variables: List[str],
-    save_path: Path,
-    title: str = "Prediction",
-    logger=None,
-    normalizer=None
-):
-    """Plot input, target, and prediction time series.
-
-    Args:
-        inputs: Input data (seq_len, num_input_vars)
-        targets: Target data (target_len, num_target_vars)
-        predictions: Prediction data (target_len, num_target_vars)
-        input_variables: List of input variable names
-        target_variables: List of target variable names
-        save_path: Path to save the plot
-        title: Plot title
-        logger: Optional logger
-        normalizer: Optional normalizer for denormalization
-    """
-    try:
-        # Denormalize data if normalizer is available
-        if normalizer is not None:
-            # Denormalize inputs (variable by variable)
-            inputs = inputs.copy()
-            for var_idx, var_name in enumerate(input_variables):
-                inputs[:, var_idx] = normalizer.denormalize_omni(
-                    inputs[:, var_idx], var_name
-                )
-
-            # Denormalize targets and predictions
-            targets = targets.copy()
-            predictions = predictions.copy()
-            for var_idx, var_name in enumerate(target_variables):
-                targets[:, var_idx] = normalizer.denormalize_omni(
-                    targets[:, var_idx], var_name
-                )
-                predictions[:, var_idx] = normalizer.denormalize_omni(
-                    predictions[:, var_idx], var_name
-                )
-        input_len = inputs.shape[0]
-        target_len = targets.shape[0]
-        num_target_vars = len(target_variables)
-
-        # Find which target variables are also in input
-        target_in_input = {}
-        for target_var in target_variables:
-            if target_var in input_variables:
-                target_in_input[target_var] = input_variables.index(target_var)
-
-        # Create figure
-        fig, axes = plt.subplots(num_target_vars, 1, figsize=(14, 4 * num_target_vars))
-        if num_target_vars == 1:
-            axes = [axes]
-
-        for var_idx, target_var in enumerate(target_variables):
-            ax = axes[var_idx]
-
-            # Time axis
-            input_time = np.arange(-input_len, 0)
-            target_time = np.arange(0, target_len)
-
-            # Plot input if target variable is in input
-            if target_var in target_in_input:
-                input_var_idx = target_in_input[target_var]
-                input_values = inputs[:, input_var_idx]
-                ax.plot(input_time, input_values, 'b-', linewidth=1.5,
-                        label=f'Input ({target_var})', alpha=0.7)
-
-            # Plot target and prediction
-            target_values = targets[:, var_idx]
-            pred_values = predictions[:, var_idx]
-
-            ax.plot(target_time, target_values, 'g-', linewidth=2,
-                    label='Target (Ground Truth)', marker='o', markersize=3)
-            ax.plot(target_time, pred_values, 'r--', linewidth=2,
-                    label='Prediction', marker='x', markersize=4)
-
-            # Formatting
-            ax.axvline(x=0, color='gray', linestyle=':', alpha=0.5, label='Reference Time')
-            ax.set_xlabel('Time Step (relative)', fontsize=10)
-            ax.set_ylabel(f'{target_var}', fontsize=10)
-            ax.set_title(f'{title} - {target_var}', fontsize=12, fontweight='bold')
-            ax.legend(loc='upper left', fontsize=9)
-            ax.grid(True, alpha=0.3)
-
-            # Add metrics
-            mae = np.abs(target_values - pred_values).mean()
-            rmse = np.sqrt(((target_values - pred_values) ** 2).mean())
-            ax.text(0.98, 0.95, f'MAE: {mae:.4f}\nRMSE: {rmse:.4f}',
-                    transform=ax.transAxes, fontsize=9, verticalalignment='top',
-                    horizontalalignment='right',
-                    bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
-
-        plt.tight_layout()
-        plt.savefig(save_path, dpi=100, bbox_inches='tight')
-        plt.close()
-
-    except Exception as e:
-        if logger:
-            logger.warning(f"Failed to create prediction plot: {e}")
-        else:
-            print(f"Warning: Failed to create prediction plot: {e}")
 
 
 class MetricsAggregator:
@@ -668,6 +555,8 @@ class Validator:
     def _extract_file_names(self, data_dict: Dict[str, Any], batch_idx: int) -> List[str]:
         """Extract file names from data dict.
 
+        Delegates to shared extract_file_names() utility.
+
         Args:
             data_dict: Data dictionary.
             batch_idx: Batch index for fallback naming.
@@ -675,18 +564,7 @@ class Validator:
         Returns:
             List of file names.
         """
-        if 'file_names' not in data_dict:
-            batch_size = data_dict['inputs'].size(0)
-            return [f"batch_{batch_idx}_sample_{i}" for i in range(batch_size)]
-
-        file_names_raw = data_dict['file_names']
-
-        if isinstance(file_names_raw, torch.Tensor):
-            return [str(name) for name in file_names_raw.tolist()]
-        elif isinstance(file_names_raw, list):
-            return [str(name) for name in file_names_raw]
-        else:
-            return [str(file_names_raw)]
+        return extract_file_names(data_dict, batch_idx)
 
     def _save_prediction_plots(
         self,
@@ -711,11 +589,11 @@ class Validator:
 
             plot_prediction_timeseries(
                 inputs=inputs[i],
-                targets=targets[i],
                 predictions=predictions[i],
                 input_variables=self.input_variables,
                 target_variables=self.target_variables,
                 save_path=save_path,
+                targets=targets[i],
                 title=f"Validation - {file_name_base}",
                 logger=self.logger,
                 normalizer=self.normalizer
@@ -742,23 +620,16 @@ class Validator:
             file_name_base = os.path.splitext(file_name)[0]
             npz_path = npz_dir / f"{file_name_base}.npz"
 
-            inp = inputs[i].copy()
-            tgt = targets[i].copy()
-            pred = predictions[i].copy()
+            inp = inputs[i]
+            tgt = targets[i]
+            pred = predictions[i]
 
             # Denormalize to original scale
             if self.normalizer is not None:
-                for var_idx, var_name in enumerate(self.input_variables):
-                    inp[:, var_idx] = self.normalizer.denormalize_omni(
-                        inp[:, var_idx], var_name
-                    )
-                for var_idx, var_name in enumerate(self.target_variables):
-                    tgt[:, var_idx] = self.normalizer.denormalize_omni(
-                        tgt[:, var_idx], var_name
-                    )
-                    pred[:, var_idx] = self.normalizer.denormalize_omni(
-                        pred[:, var_idx], var_name
-                    )
+                inp, tgt, pred = denormalize_arrays(
+                    inp, pred, self.input_variables, self.target_variables,
+                    self.normalizer, targets=tgt
+                )
 
             np.savez_compressed(
                 npz_path,
@@ -768,63 +639,6 @@ class Validator:
                 input_variables=self.input_variables,
                 target_variables=self.target_variables
             )
-
-    def _save_overall_plot(self, results: Dict[str, Any], dataloader):
-        """Save overall validation plot with averaged results.
-
-        Args:
-            results: Validation results dictionary.
-            dataloader: Dataloader (for accessing stat_dict).
-        """
-        try:
-            # Check if stat_dict is available
-            stat_dict = None
-            if hasattr(dataloader, 'dataset') and hasattr(dataloader.dataset, 'stat_dict'):
-                stat_dict = dataloader.dataset.stat_dict
-
-            if stat_dict is None:
-                if self.logger:
-                    self.logger.warning("Skipping overall plot: stat_dict not available in dataset")
-                return
-
-            # Extract all targets and predictions
-            all_targets = []
-            all_predictions = []
-
-            for file_result in results['file_results']:
-                all_targets.append(file_result['targets'])
-                all_predictions.append(file_result['predictions'])
-
-            # Convert to arrays and compute mean
-            all_targets = np.array(all_targets)  # (n_samples, n_groups, n_variables)
-            all_predictions = np.array(all_predictions)
-
-            mean_targets = np.mean(all_targets, axis=0)  # (n_groups, n_variables)
-            mean_predictions = np.mean(all_predictions, axis=0)
-
-            # Save overall plot
-            plots_dir = Path(self.results_writer.output_dir) / "plots"
-            overall_plot_path = str(plots_dir / "overall_validation_results")
-            overall_plot_title = "Overall Validation Results (Mean)"
-
-            save_plot(
-                targets=mean_targets,
-                outputs=mean_predictions,
-                target_variables=self.target_variables,
-                stat_dict=stat_dict,
-                plot_path=overall_plot_path,
-                plot_title=overall_plot_title,
-                logger=self.logger
-            )
-
-            if self.logger:
-                self.logger.info(f"Overall validation plot saved: {overall_plot_path}.png")
-
-        except Exception as e:
-            if self.logger:
-                self.logger.warning(f"Failed to create overall validation plot: {e}")
-            else:
-                print(f"Warning: Failed to create overall validation plot: {e}")
 
     def log_progress(self, batch_idx: int, total_batches: int):
         """Log validation progress.

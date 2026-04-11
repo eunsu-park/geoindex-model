@@ -22,98 +22,9 @@ from typing import Dict, List, Any, Optional
 import torch
 import torch.nn as nn
 import numpy as np
-import matplotlib.pyplot as plt
 
-
-def plot_prediction_timeseries(
-    inputs: np.ndarray,
-    targets: Optional[np.ndarray],
-    predictions: np.ndarray,
-    input_variables: List[str],
-    target_variables: List[str],
-    save_path: Path,
-    title: str = "Prediction",
-    logger=None
-):
-    """Plot input, target, and prediction time series.
-
-    Args:
-        inputs: Input data (seq_len, num_input_vars)
-        targets: Target data (target_len, num_target_vars) or None
-        predictions: Prediction data (target_len, num_target_vars)
-        input_variables: List of input variable names
-        target_variables: List of target variable names
-        save_path: Path to save the plot
-        title: Plot title
-        logger: Optional logger
-    """
-    try:
-        input_len = inputs.shape[0]
-        pred_len = predictions.shape[0]
-        num_target_vars = len(target_variables)
-
-        # Find which target variables are also in input
-        target_in_input = {}
-        for target_var in target_variables:
-            if target_var in input_variables:
-                target_in_input[target_var] = input_variables.index(target_var)
-
-        # Create figure
-        fig, axes = plt.subplots(num_target_vars, 1, figsize=(14, 4 * num_target_vars))
-        if num_target_vars == 1:
-            axes = [axes]
-
-        for var_idx, target_var in enumerate(target_variables):
-            ax = axes[var_idx]
-
-            # Time axis
-            input_time = np.arange(-input_len, 0)
-            pred_time = np.arange(0, pred_len)
-
-            # Plot input if target variable is in input
-            if target_var in target_in_input:
-                input_var_idx = target_in_input[target_var]
-                input_values = inputs[:, input_var_idx]
-                ax.plot(input_time, input_values, 'b-', linewidth=1.5,
-                        label=f'Input ({target_var})', alpha=0.7)
-
-            # Plot target if available
-            if targets is not None:
-                target_values = targets[:, var_idx]
-                ax.plot(pred_time, target_values, 'g-', linewidth=2,
-                        label='Target (Ground Truth)', marker='o', markersize=3)
-
-            # Plot prediction
-            pred_values = predictions[:, var_idx]
-            ax.plot(pred_time, pred_values, 'r--', linewidth=2,
-                    label='Prediction', marker='x', markersize=4)
-
-            # Formatting
-            ax.axvline(x=0, color='gray', linestyle=':', alpha=0.5, label='Reference Time')
-            ax.set_xlabel('Time Step (relative)', fontsize=10)
-            ax.set_ylabel(f'{target_var} (normalized)', fontsize=10)
-            ax.set_title(f'{title} - {target_var}', fontsize=12, fontweight='bold')
-            ax.legend(loc='upper left', fontsize=9)
-            ax.grid(True, alpha=0.3)
-
-            # Add metrics if targets available
-            if targets is not None:
-                mae = np.abs(target_values - pred_values).mean()
-                rmse = np.sqrt(((target_values - pred_values) ** 2).mean())
-                ax.text(0.98, 0.95, f'MAE: {mae:.4f}\nRMSE: {rmse:.4f}',
-                        transform=ax.transAxes, fontsize=9, verticalalignment='top',
-                        horizontalalignment='right',
-                        bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
-
-        plt.tight_layout()
-        plt.savefig(save_path, dpi=100, bbox_inches='tight')
-        plt.close()
-
-    except Exception as e:
-        if logger:
-            logger.warning(f"Failed to create prediction plot: {e}")
-        else:
-            print(f"Warning: Failed to create prediction plot: {e}")
+# Import shared plotting and utility functions
+from .plotting import plot_prediction_timeseries, extract_file_names, denormalize_arrays
 
 
 class TestResultsWriter:
@@ -354,23 +265,15 @@ class Tester:
                 total_samples += 1
 
                 # Denormalize for plot and npz output
-                inp_dn = result['inputs'].copy()
-                pred_dn = result['predictions'].copy()
-                tgt_dn = result['targets'].copy() if has_targets else None
+                inp_dn = result['inputs']
+                pred_dn = result['predictions']
+                tgt_dn = result['targets'] if has_targets else None
 
                 if self.normalizer is not None:
-                    for var_idx, var_name in enumerate(self.input_variables):
-                        inp_dn[:, var_idx] = self.normalizer.denormalize_omni(
-                            inp_dn[:, var_idx], var_name
-                        )
-                    for var_idx, var_name in enumerate(self.target_variables):
-                        pred_dn[:, var_idx] = self.normalizer.denormalize_omni(
-                            pred_dn[:, var_idx], var_name
-                        )
-                        if tgt_dn is not None:
-                            tgt_dn[:, var_idx] = self.normalizer.denormalize_omni(
-                                tgt_dn[:, var_idx], var_name
-                            )
+                    inp_dn, tgt_dn, pred_dn = denormalize_arrays(
+                        inp_dn, pred_dn, self.input_variables,
+                        self.target_variables, self.normalizer, targets=tgt_dn
+                    )
 
                 # Save plot
                 if self.save_plots:
@@ -425,6 +328,8 @@ class Tester:
     def _extract_file_names(self, data_dict: Dict[str, Any], batch_idx: int) -> List[str]:
         """Extract file names from data dict.
 
+        Delegates to shared extract_file_names() utility.
+
         Args:
             data_dict: Data dictionary.
             batch_idx: Batch index for fallback naming.
@@ -432,18 +337,7 @@ class Tester:
         Returns:
             List of file names.
         """
-        if "file_names" not in data_dict:
-            batch_size = data_dict["inputs"].size(0)
-            return [f"batch_{batch_idx}_sample_{idx}" for idx in range(batch_size)]
-
-        file_names_raw = data_dict["file_names"]
-
-        if isinstance(file_names_raw, torch.Tensor):
-            return [str(name) for name in file_names_raw.tolist()]
-        elif isinstance(file_names_raw, list):
-            return [str(name) for name in file_names_raw]
-        else:
-            return [str(file_names_raw)]
+        return extract_file_names(data_dict, batch_idx)
 
     def log_summary(self, total_samples: int, has_targets: bool = False):
         """Log test summary.
