@@ -179,7 +179,7 @@ def main():
             continue
         model = get_model_suffix(d, args.config_base)
         if model is not None:
-            zip_path = os.path.join(args.results_dir, d, 'validation', 'best.zip')
+            zip_path = os.path.join(args.results_dir, d, 'validation', 'best', 'npz.zip')
             if os.path.exists(zip_path):
                 experiments[model] = zip_path
 

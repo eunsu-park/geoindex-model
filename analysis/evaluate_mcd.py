@@ -29,7 +29,7 @@ def load_mcd_npz(results_dir, experiment):
 
     Returns arrays: all_means, all_stds, all_targets (concatenated).
     """
-    zip_path = os.path.join(results_dir, experiment, 'mcd', 'best.zip')
+    zip_path = os.path.join(results_dir, experiment, 'mcd', 'best', 'npz.zip')
     if not os.path.exists(zip_path):
         return None
 

@@ -42,7 +42,7 @@ def load_validation_npz(results_dir, experiment):
 
     Returns list of (targets, predictions) arrays, both denormalized.
     """
-    zip_path = os.path.join(results_dir, experiment, 'validation', 'best.zip')
+    zip_path = os.path.join(results_dir, experiment, 'validation', 'best', 'npz.zip')
     if not os.path.exists(zip_path):
         return None
 
