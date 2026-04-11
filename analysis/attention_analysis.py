@@ -52,12 +52,12 @@ class AttentionExtractor:
         # Detect model type
         self.model_type = self._detect_model_type()
 
-        if self.model_type == 'convlstm':
+        supported = ('transformer', 'fusion', 'gnn_transformer', 'gnn_patchtst', 'patchtst')
+        if self.model_type not in supported:
             raise ValueError(
-                "AttentionExtractor does not support ConvLSTM-only models. "
-                "ConvLSTM models do not have Transformer layers, so there are no "
-                "attention weights to extract. Use SaliencyExtractor instead for "
-                "SDO image analysis."
+                f"AttentionExtractor does not support '{self.model_type}' models. "
+                f"Supported types: {supported}. "
+                "Use SaliencyExtractor instead for other model types."
             )
 
         print(f"AttentionExtractor initialized on {device}")
@@ -69,17 +69,34 @@ class AttentionExtractor:
         Returns:
             'fusion': Has both transformer_model and convlstm_model
             'transformer': Has only transformer_model
-            'convlstm': Has only convlstm_model
+            'gnn_transformer': GNN with transformer temporal encoder
+            'gnn_patchtst': GNN with patch_transformer temporal encoder
         """
         has_transformer = hasattr(self.model, 'transformer_model')
         has_convlstm = hasattr(self.model, 'convlstm_model')
+        has_gnn = hasattr(self.model, 'gnn_encoder')
 
-        if has_transformer and has_convlstm:
+        # PatchTSTOnlyModel: has encoder (PatchTransformerEncoder) with transformer_encoder
+        has_patchtst = (
+            hasattr(self.model, 'encoder')
+            and hasattr(getattr(self.model, 'encoder', None), 'transformer_encoder')
+            and hasattr(getattr(self.model, 'encoder', None), 'patch_embed')
+        )
+
+        if has_gnn:
+            temporal_type = getattr(self.model.gnn_encoder, 'temporal_type', None)
+            if temporal_type == 'transformer':
+                return 'gnn_transformer'
+            elif temporal_type == 'patch_transformer':
+                return 'gnn_patchtst'
+            else:
+                return f'gnn_{temporal_type}'
+        elif has_patchtst:
+            return 'patchtst'
+        elif has_transformer and has_convlstm:
             return 'fusion'
-        elif has_transformer and not has_convlstm:
+        elif has_transformer:
             return 'transformer'
-        elif has_convlstm and not has_transformer:
-            return 'convlstm'
         else:
             return 'unknown'
 
@@ -107,67 +124,156 @@ class AttentionExtractor:
         if image_input is not None:
             image_input = image_input.to(self.device)
 
+        with torch.no_grad():
+            if self.model_type in ('gnn_transformer', 'gnn_patchtst'):
+                attention_weights, output = self._extract_gnn_attention(solar_wind_input)
+            elif self.model_type == 'patchtst':
+                attention_weights, output = self._extract_patchtst_attention(solar_wind_input)
+            else:
+                attention_weights, output = self._extract_standard_attention(
+                    solar_wind_input, image_input
+                )
+
+        return attention_weights, output
+
+    def _extract_standard_attention(
+        self,
+        solar_wind_input: torch.Tensor,
+        image_input: Optional[torch.Tensor] = None
+    ) -> Tuple[List[torch.Tensor], torch.Tensor]:
+        """Extract attention from transformer/fusion models."""
         transformer = self.model.transformer_model
 
-        with torch.no_grad():
-            # ================================================================
-            # 1. Input Projection & Positional Encoding
-            # ================================================================
-            x = transformer.input_projection(solar_wind_input)  # (batch, seq_len, d_model)
-            x = transformer.pos_encoder(x)  # Add positional encoding
+        # 1. Input Projection & Positional Encoding
+        x = transformer.input_projection(solar_wind_input)
+        x = transformer.pos_encoder(x)
 
-            # ================================================================
-            # 2. Transformer Encoder Layers - MANUAL FORWARD
-            # ================================================================
-            attention_weights = []
-
-            for layer_idx, layer in enumerate(transformer.transformer_encoder.layers):
-                # Self-attention with need_weights=True
-                attn_output, attn_weight = layer.self_attn(
-                    x, x, x,
-                    need_weights=True,
-                    average_attn_weights=False  # Keep per-head weights
-                )
-                # attn_weight shape: (batch, num_heads, seq_len, seq_len)
-                attention_weights.append(attn_weight.detach())
-
-                # Residual connection + Layer Norm
-                x = layer.norm1(x + layer.dropout1(attn_output))
-
-                # Feed-forward network
-                x2 = layer.linear2(layer.dropout(layer.activation(layer.linear1(x))))
-                x = layer.norm2(x + layer.dropout2(x2))
-
-            # ================================================================
-            # 3. Global Pooling & Output Projection
-            # ================================================================
-            x = x.transpose(1, 2)  # (batch, d_model, seq_len)
-            x = transformer.global_pool(x).squeeze(-1)  # (batch, d_model)
-            transformer_features = transformer.output_projection(x)
-
-            # ================================================================
-            # 4. Rest of the model - depends on model type
-            # ================================================================
-            if self.model_type == 'fusion':
-                # Fusion model: ConvLSTM + Cross-modal fusion
-                convlstm_features = self.model.convlstm_model(image_input)
-                fused_features = self.model.cross_modal_fusion(
-                    transformer_features, convlstm_features
-                )
-                predictions = self.model.regression_head(fused_features)
-            elif self.model_type == 'transformer':
-                # Transformer-only: Direct regression from transformer features
-                predictions = self.model.regression_head(transformer_features)
-            else:
-                raise ValueError(f"Unsupported model type: {self.model_type}")
-
-            # Reshape output
-            output = predictions.reshape(
-                predictions.size(0),
-                self.model.target_sequence_length,
-                self.model.num_target_variables
+        # 2. Transformer Encoder Layers - MANUAL FORWARD
+        attention_weights = []
+        for layer in transformer.transformer_encoder.layers:
+            attn_output, attn_weight = layer.self_attn(
+                x, x, x, need_weights=True, average_attn_weights=False
             )
+            attention_weights.append(attn_weight.detach())
+            x = layer.norm1(x + layer.dropout1(attn_output))
+            x2 = layer.linear2(layer.dropout(layer.activation(layer.linear1(x))))
+            x = layer.norm2(x + layer.dropout2(x2))
 
+        # 3. Global Pooling & Output Projection
+        x = x.transpose(1, 2)
+        x = transformer.global_pool(x).squeeze(-1)
+        transformer_features = transformer.output_projection(x)
+
+        # 4. Final prediction
+        if self.model_type == 'fusion':
+            convlstm_features = self.model.convlstm_model(image_input)
+            fused_features = self.model.cross_modal_fusion(
+                transformer_features, convlstm_features
+            )
+            predictions = self.model.regression_head(fused_features)
+        else:
+            predictions = self.model.regression_head(transformer_features)
+
+        output = predictions.reshape(
+            predictions.size(0),
+            self.model.target_sequence_length,
+            self.model.num_target_variables
+        )
+        return attention_weights, output
+
+    def _extract_gnn_attention(
+        self,
+        solar_wind_input: torch.Tensor
+    ) -> Tuple[List[torch.Tensor], torch.Tensor]:
+        """Extract attention from GNN models with transformer temporal encoder."""
+        gnn = self.model.gnn_encoder
+        batch_size, seq_len, _ = solar_wind_input.size()
+
+        # 1. GNN: split to nodes, project, GCN
+        node_groups = gnn._split_to_nodes(solar_wind_input)
+        node_features = []
+        for i, group in enumerate(node_groups):
+            node_features.append(gnn.node_projections[i](group))
+        node_features = torch.stack(node_features, dim=2)
+
+        adj = gnn._compute_adaptive_adj()
+        h = node_features.reshape(batch_size * seq_len, gnn.num_nodes, -1)
+        for gcn_layer in gnn.gcn_layers:
+            h = gcn_layer(h, adj)
+            h = gnn.gcn_activation(h)
+            h = gnn.gcn_dropout(h)
+        h = h.reshape(batch_size, seq_len, -1)
+
+        # 2. Temporal projection
+        h = gnn.temporal_proj(h)
+
+        # 3. Positional encoding (transformer) or patch embedding (patchtst)
+        if self.model_type == 'gnn_patchtst':
+            h = gnn._patch_embed(h)
+            h = h + gnn._patch_pos_embed[:, :h.size(1), :]
+        else:
+            h = gnn.pos_encoder(h)
+
+        # 4. Transformer encoder layers - MANUAL FORWARD
+        attention_weights = []
+        for layer in gnn.temporal_encoder.layers:
+            attn_output, attn_weight = layer.self_attn(
+                h, h, h, need_weights=True, average_attn_weights=False
+            )
+            attention_weights.append(attn_weight.detach())
+            h = layer.norm1(h + layer.dropout1(attn_output))
+            x2 = layer.linear2(layer.dropout(layer.activation(layer.linear1(h))))
+            h = layer.norm2(h + layer.dropout2(x2))
+
+        # 5. Global pooling & output projection
+        h = h.transpose(1, 2)
+        h = gnn.global_pool(h).squeeze(-1)
+        gnn_features = gnn.output_projection(h)
+
+        # 6. Regression head
+        predictions = self.model.regression_head(gnn_features)
+        output = predictions.reshape(
+            predictions.size(0),
+            self.model.target_sequence_length,
+            self.model.num_target_variables
+        )
+        return attention_weights, output
+
+    def _extract_patchtst_attention(
+        self,
+        solar_wind_input: torch.Tensor
+    ) -> Tuple[List[torch.Tensor], torch.Tensor]:
+        """Extract attention from PatchTSTOnlyModel."""
+        enc = self.model.encoder
+
+        # 1. Patch embedding + positional embedding
+        tokens = enc.patch_embed(solar_wind_input)
+        tokens = tokens + enc.pos_embed[:, :tokens.size(1), :]
+
+        # 2. Transformer encoder layers - MANUAL FORWARD
+        h = tokens
+        attention_weights = []
+        for layer in enc.transformer_encoder.layers:
+            attn_output, attn_weight = layer.self_attn(
+                h, h, h, need_weights=True, average_attn_weights=False
+            )
+            attention_weights.append(attn_weight.detach())
+            h = layer.norm1(h + layer.dropout1(attn_output))
+            x2 = layer.linear2(layer.dropout(layer.activation(layer.linear1(h))))
+            h = layer.norm2(h + layer.dropout2(x2))
+
+        # 3. Global pooling & output projection
+        h = h.transpose(1, 2)
+        h = enc.global_pool(h).squeeze(-1)
+        features = enc.output_projection(h)
+
+        # 4. Regression head
+        predictions = self.model.regression_head(features)
+        output = predictions.reshape(
+            predictions.size(0),
+            self.model.target_sequence_length,
+            self.model.num_target_variables
+        )
         return attention_weights, output
 
     def compute_temporal_importance(

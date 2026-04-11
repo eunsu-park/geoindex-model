@@ -354,13 +354,11 @@ def main(config: DictConfig):
         extractor = AttentionExtractor(model, device=device)
     except ValueError as e:
         print("\n" + "=" * 70)
-        print("ERROR: MODEL TYPE NOT SUPPORTED")
+        print("SKIPPED: MODEL TYPE NOT SUPPORTED")
         print("=" * 70)
         print(str(e))
-        print("\nTo use attention analysis:")
-        print("  1. Use a fusion model: model.model_type=fusion")
-        print("  2. Use a transformer model: model.model_type=transformer")
-        print("\nFor convlstm-only models, use saliency analysis instead:")
+        print("\nAttention analysis requires transformer or fusion models.")
+        print("For other model types, use saliency analysis instead:")
         print("  python analysis/run_saliency.py --config-name=local saliency.epoch=10")
         print("=" * 70)
         return
