@@ -4,12 +4,20 @@
 # Runs up to MAX_JOBS processes concurrently.
 # When one finishes, the next config in the queue starts automatically.
 #
-# Usage:
-#   ./train.sh                           # Run all configs (default)
-#   ./train.sh --config-file list.txt    # Run configs from file
-#   ./train.sh --max-jobs 4              # Limit to 4 parallel jobs
-#   ./train.sh --filter out12h           # Only configs matching "out12h"
-#   ./train.sh --dry-run                 # Print configs without running
+# Usage (new — config groups):
+#   ./train.sh                                  # Run all io × model combos
+#   ./train.sh --filter out12h                  # Only io configs matching "out12h"
+#   ./train.sh --model transformer              # Only transformer model
+#   ./train.sh --filter in2d --model gnn_tcn    # Specific io + model
+#   ./train.sh --max-jobs 4                     # Limit to 4 parallel jobs
+#   ./train.sh --dry-run                        # Print configs without running
+#
+# Usage (legacy — flat config files in configs/archive/):
+#   ./train.sh --legacy                         # Run all archived flat configs
+#   ./train.sh --legacy --filter out12h         # Filter archived configs
+#
+# Usage (file-based):
+#   ./train.sh --config-file list.txt           # Run configs from file
 
 set -e
 
@@ -22,7 +30,9 @@ cd "$SCRIPT_DIR"
 MAX_JOBS=8
 CONFIG_FILE=""
 FILTER=""
+MODEL_FILTER=""
 DRY_RUN=false
+LEGACY=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -38,13 +48,21 @@ while [[ $# -gt 0 ]]; do
             FILTER="$2"
             shift 2
             ;;
+        --model)
+            MODEL_FILTER="$2"
+            shift 2
+            ;;
         --dry-run)
             DRY_RUN=true
             shift
             ;;
+        --legacy)
+            LEGACY=true
+            shift
+            ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: ./train.sh [--config-file FILE] [--max-jobs N] [--filter PATTERN] [--dry-run]"
+            echo "Usage: ./train.sh [--config-file FILE] [--max-jobs N] [--filter PATTERN] [--model MODEL] [--legacy] [--dry-run]"
             exit 1
             ;;
     esac
@@ -53,7 +71,11 @@ done
 # =============================================================================
 # Collect configs
 # =============================================================================
+# Each entry is either:
+#   - legacy mode: a config name (e.g. "in2d_out12h_transformer")
+#   - group mode:  "io=in2d_out12h model=transformer" (space-separated overrides)
 CONFIGS=()
+DISPLAY_NAMES=()
 
 if [[ -n "$CONFIG_FILE" ]]; then
     # Read from file (skip empty lines and comments)
@@ -61,22 +83,54 @@ if [[ -n "$CONFIG_FILE" ]]; then
         line=$(echo "$line" | sed 's/#.*//' | xargs)
         [[ -z "$line" ]] && continue
         CONFIGS+=("$line")
+        DISPLAY_NAMES+=("$line")
     done < "$CONFIG_FILE"
-else
-    # Glob from configs/ directory
-    for f in configs/in[123]d_out*.yaml; do
+elif $LEGACY; then
+    # Legacy mode: glob from configs/archive/
+    for f in configs/archive/in[123]d_out*.yaml; do
         name=$(basename "$f" .yaml)
         if [[ -n "$FILTER" && ! "$name" =~ $FILTER ]]; then
             continue
         fi
         CONFIGS+=("$name")
+        DISPLAY_NAMES+=("$name")
     done
     IFS=$'\n' CONFIGS=($(sort <<<"${CONFIGS[*]}")); unset IFS
+    IFS=$'\n' DISPLAY_NAMES=($(sort <<<"${DISPLAY_NAMES[*]}")); unset IFS
+else
+    # New config group mode: io × model cross product
+    IO_CONFIGS=()
+    for f in configs/io/*.yaml; do
+        io_name=$(basename "$f" .yaml)
+        if [[ -n "$FILTER" && ! "$io_name" =~ $FILTER ]]; then
+            continue
+        fi
+        IO_CONFIGS+=("$io_name")
+    done
+    IFS=$'\n' IO_CONFIGS=($(sort <<<"${IO_CONFIGS[*]}")); unset IFS
+
+    MODEL_CONFIGS=()
+    for f in configs/model/*.yaml; do
+        model_name=$(basename "$f" .yaml)
+        if [[ -n "$MODEL_FILTER" && "$model_name" != "$MODEL_FILTER" ]]; then
+            continue
+        fi
+        MODEL_CONFIGS+=("$model_name")
+    done
+    IFS=$'\n' MODEL_CONFIGS=($(sort <<<"${MODEL_CONFIGS[*]}")); unset IFS
+
+    for io in "${IO_CONFIGS[@]}"; do
+        for mdl in "${MODEL_CONFIGS[@]}"; do
+            exp_name="${io}_${mdl}"
+            CONFIGS+=("+io=${io} +model=${mdl} experiment.name=${exp_name}")
+            DISPLAY_NAMES+=("${exp_name}")
+        done
+    done
 fi
 
 TOTAL=${#CONFIGS[@]}
 if [[ $TOTAL -eq 0 ]]; then
-    echo "No configs found (config-file: '$CONFIG_FILE', filter: '$FILTER')"
+    echo "No configs found (config-file: '$CONFIG_FILE', filter: '$FILTER', model: '$MODEL_FILTER')"
     exit 1
 fi
 
@@ -85,14 +139,22 @@ echo "Parallel Training Runner"
 echo "========================================"
 echo "Total configs: $TOTAL"
 echo "Max parallel:  $MAX_JOBS"
-echo "Source:        ${CONFIG_FILE:-glob (filter: ${FILTER:-none})}"
+if $LEGACY; then
+    echo "Mode:          legacy (archive)"
+elif [[ -n "$CONFIG_FILE" ]]; then
+    echo "Source:        $CONFIG_FILE"
+else
+    echo "Mode:          config groups (io × model)"
+fi
+echo "Filter:        ${FILTER:-none}"
+echo "Model:         ${MODEL_FILTER:-all}"
 echo "========================================"
 echo ""
 
 if $DRY_RUN; then
     echo "[DRY RUN] Configs to run:"
-    for cfg in "${CONFIGS[@]}"; do
-        echo "  $cfg"
+    for name in "${DISPLAY_NAMES[@]}"; do
+        echo "  $name"
     done
     echo ""
     echo "Total: $TOTAL configs"
@@ -142,17 +204,28 @@ wait_for_slot() {
     done
 }
 
-for cfg in "${CONFIGS[@]}"; do
+for idx in "${!CONFIGS[@]}"; do
+    cfg="${CONFIGS[$idx]}"
+    display_name="${DISPLAY_NAMES[$idx]}"
+
     wait_for_slot
 
     STARTED=$((STARTED + 1))
-    echo "[START] $cfg  ($STARTED/$TOTAL, running: ${#RUNNING_PIDS[@]}+1)"
+    echo "[START] $display_name  ($STARTED/$TOTAL, running: ${#RUNNING_PIDS[@]}+1)"
 
-    python scripts/train.py --config-name="$cfg" \
-        > "$LOG_DIR/${cfg}.log" 2>&1 &
+    if $LEGACY || [[ -n "$CONFIG_FILE" ]]; then
+        # Legacy / file mode: config name passed as --config-name
+        python scripts/train.py --config-name="$cfg" \
+            > "$LOG_DIR/${display_name}.log" 2>&1 &
+    else
+        # Config group mode: overrides passed as positional args
+        # shellcheck disable=SC2086
+        python scripts/train.py --config-name=local $cfg \
+            > "$LOG_DIR/${display_name}.log" 2>&1 &
+    fi
 
     RUNNING_PIDS+=($!)
-    RUNNING_NAMES+=("$cfg")
+    RUNNING_NAMES+=("$display_name")
 done
 
 for i in "${!RUNNING_PIDS[@]}"; do
