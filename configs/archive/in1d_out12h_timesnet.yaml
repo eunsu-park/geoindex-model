@@ -1,0 +1,12 @@
+# Experiment: timesnet, in1d input, out12h output
+# Usage: python scripts/train.py --config-name=in1d_out12h_timesnet
+
+defaults:
+  - in1d_out12h
+  - _self_
+
+experiment:
+  name: "in1d_out12h_timesnet"
+
+model:
+  model_type: "timesnet"

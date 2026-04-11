@@ -1,0 +1,13 @@
+# Experiment: gnn_transformer, in1d input, out12h output
+# Usage: python scripts/train.py --config-name=in1d_out12h_gnn_transformer
+
+defaults:
+  - in1d_out12h
+  - _self_
+
+experiment:
+  name: "in1d_out12h_gnn_transformer"
+
+model:
+  model_type: "gnn"
+  gnn_temporal_type: "transformer"

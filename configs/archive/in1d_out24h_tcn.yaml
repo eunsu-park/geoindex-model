@@ -1,0 +1,12 @@
+# Experiment: tcn, in1d input, out24h output
+# Usage: python scripts/train.py --config-name=in1d_out24h_tcn
+
+defaults:
+  - in1d_out24h
+  - _self_
+
+experiment:
+  name: "in1d_out24h_tcn"
+
+model:
+  model_type: "tcn"
