@@ -52,8 +52,7 @@ FAIL=0
 for name_pid in "validation:$PID_VAL" "mcd:$PID_MCD" "attention:$PID_ATT"; do
     name="${name_pid%%:*}"
     pid="${name_pid##*:}"
-    wait "$pid"
-    code=$?
+    wait "$pid" && code=0 || code=$?
     if [ $code -eq 0 ]; then
         echo "[OK]   $name (exit $code)"
     else
