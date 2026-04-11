@@ -7,10 +7,6 @@ Functions:
     load_model: Load model checkpoint.
     save_model: Save model checkpoint.
     resolve_paths: Resolve checkpoint_path and output_dir from epoch or explicit paths.
-    save_plot: Save comparison plot and data.
-    denormalize_predictions: Denormalize predictions using statistics.
-    create_comparison_plot: Create and save comparison plot.
-    save_data_h5: Save data to HDF5 file.
 
 Example:
     >>> from src.utils import setup_experiment, load_model, resolve_paths
@@ -28,8 +24,6 @@ from typing import List, Optional
 
 import numpy as np
 import torch
-import matplotlib.pyplot as plt
-import h5py
 
 
 def setup_seed(seed: int = 250104) -> None:
@@ -294,9 +288,18 @@ def create_local_output_dir(
 def compress_and_move(
     local_dir: Path, nas_output_dir: str, cleanup: bool = True
 ):
-    """Compress local output directory to zip and move to NAS.
+    """Compress subdirectories individually and move to NAS.
 
-    Equivalent to: cd <parent> && zip -r <name>.zip <name>
+    Keeps the output folder structure on NAS. Top-level files (TXT, CSV)
+    are copied as-is, while each subdirectory is compressed into its own
+    ZIP archive within the NAS folder.
+
+    Result structure example:
+        nas_output_dir/
+        ├── validation_results.txt   (copied)
+        ├── validation_results.csv   (copied)
+        ├── plots.zip                (from plots/)
+        └── npz.zip                  (from npz/)
 
     Args:
         local_dir: Local temp directory containing results.
@@ -304,175 +307,41 @@ def compress_and_move(
         cleanup: If True, delete local temp directory after move.
     """
     nas_path = Path(nas_output_dir)
-    nas_path.parent.mkdir(parents=True, exist_ok=True)
+    nas_path.mkdir(parents=True, exist_ok=True)
 
-    archive_name = f"{local_dir.name}.zip"
-    archive_local = local_dir.parent / archive_name
+    # Copy top-level files directly
+    for item in sorted(local_dir.iterdir()):
+        if item.is_file():
+            dest = nas_path / item.name
+            shutil.copy2(str(item), str(dest))
+            print(f"Copied: {item.name} → {dest}")
 
-    print(f"Compressing {local_dir} → {archive_local}")
-    shutil.make_archive(
-        str(archive_local.with_suffix('')),
-        'zip',
-        root_dir=str(local_dir.parent),
-        base_dir=local_dir.name
-    )
+    # Compress each subdirectory into an individual ZIP
+    for item in sorted(local_dir.iterdir()):
+        if not item.is_dir():
+            continue
+        # Skip empty directories
+        if not any(item.iterdir()):
+            print(f"Skipped empty directory: {item.name}")
+            continue
 
-    file_size_mb = archive_local.stat().st_size / (1024 ** 2)
-    print(f"Archive size: {file_size_mb:.1f} MB")
+        archive_local = local_dir / f"{item.name}.zip"
+        print(f"Compressing {item.name}/ → {archive_local.name}")
+        shutil.make_archive(
+            str(archive_local.with_suffix('')),
+            'zip',
+            root_dir=str(local_dir),
+            base_dir=item.name
+        )
 
-    archive_dest = nas_path.parent / archive_name
-    shutil.move(str(archive_local), str(archive_dest))
-    print(f"Moved to: {archive_dest}")
+        file_size_mb = archive_local.stat().st_size / (1024 ** 2)
+        archive_dest = nas_path / archive_local.name
+        shutil.move(str(archive_local), str(archive_dest))
+        print(f"  → {archive_dest} ({file_size_mb:.1f} MB)")
 
     if cleanup:
         shutil.rmtree(local_dir)
         print(f"Cleaned up: {local_dir}")
-
-
-def save_plot(targets: np.ndarray, outputs: np.ndarray,
-              target_variables: List[str], stat_dict: dict,
-              plot_path: str, plot_title: str,
-              logger: Optional[logging.Logger] = None) -> None:
-    """Save comparison plot and data with improved error handling.
-
-    Args:
-        targets: Ground truth values of shape (seq_len, n_vars).
-        outputs: Model predictions of shape (seq_len, n_vars).
-        target_variables: List of target variable names.
-        stat_dict: Dictionary containing statistics for denormalization.
-        plot_path: Path to save the plot (without extension).
-        plot_title: Title of the plot.
-        logger: Optional logger for output.
-
-    Raises:
-        ValueError: If input shapes don't match or are invalid.
-        OSError: If file saving fails.
-    """
-    # Validate inputs
-    if targets.shape != outputs.shape:
-        raise ValueError(f"Shape mismatch: targets {targets.shape} != outputs {outputs.shape}")
-
-    if targets.shape[1] != len(target_variables):
-        raise ValueError(f"Variable count mismatch: got {targets.shape[1]}, expected {len(target_variables)}")
-
-    try:
-        # Denormalize data
-        targets_denorm, outputs_denorm = denormalize_predictions(
-            targets, outputs, target_variables, stat_dict
-        )
-
-        # Create and save plot
-        create_comparison_plot(
-            targets_denorm, outputs_denorm, target_variables,
-            plot_title, f"{plot_path}.png"
-        )
-
-        # Save data as HDF5
-        save_data_h5(targets_denorm, outputs_denorm, f"{plot_path}.h5")
-
-        message = f"Plot and data saved: {plot_path}"
-        _log_message(logger, message, logging.DEBUG)
-
-    except Exception as e:
-        error_msg = f"Failed to save plot {plot_path}: {e}"
-        _log_message(logger, error_msg, logging.ERROR)
-        raise OSError(error_msg)
-
-
-def denormalize_predictions(targets: np.ndarray, outputs: np.ndarray,
-                           target_variables: List[str], stat_dict: dict) -> tuple:
-    """Denormalize predictions using statistics.
-
-    Args:
-        targets: Normalized target values.
-        outputs: Normalized prediction values.
-        target_variables: List of variable names.
-        stat_dict: Statistics dictionary with mean/std for each variable.
-
-    Returns:
-        Tuple of (denormalized_targets, denormalized_outputs).
-    """
-    zero_clip_variables = {"ap_index", "ap_index_nt"}  # Variables that should be clipped to >= 0
-
-    targets_denorm_list = []
-    outputs_denorm_list = []
-
-    for idx, variable in enumerate(target_variables):
-        # Process targets
-        target_var = targets[:, idx:idx+1]
-        if variable in stat_dict:
-            mean = stat_dict[variable]['mean']
-            std = stat_dict[variable]['std']
-            target_denorm = (target_var * std) + mean
-        else:
-            target_denorm = target_var
-
-        # Clip if necessary
-        if variable in zero_clip_variables:
-            target_denorm = np.clip(target_denorm, 0, None)
-        targets_denorm_list.append(target_denorm)
-
-        # Process outputs
-        output_var = outputs[:, idx:idx+1]
-        if variable in stat_dict:
-            output_denorm = (output_var * std) + mean
-        else:
-            output_denorm = output_var
-
-        # Clip if necessary
-        if variable in zero_clip_variables:
-            output_denorm = np.clip(output_denorm, 0, None)
-        outputs_denorm_list.append(output_denorm)
-
-    return (np.concatenate(targets_denorm_list, axis=1),
-            np.concatenate(outputs_denorm_list, axis=1))
-
-
-def create_comparison_plot(targets: np.ndarray, outputs: np.ndarray,
-                          target_variables: List[str], title: str,
-                          save_path: str) -> None:
-    """Create and save comparison plot.
-
-    Args:
-        targets: Denormalized target values.
-        outputs: Denormalized output values.
-        target_variables: List of variable names.
-        title: Plot title.
-        save_path: Path to save the plot.
-    """
-    fig, ax = plt.subplots(figsize=(12, 6))
-    ax.set_title(title, fontsize=14, fontweight='bold')
-
-    colors = plt.cm.tab10(np.linspace(0, 1, len(target_variables)))
-
-    for idx, (variable, color) in enumerate(zip(target_variables, colors)):
-        ax.plot(targets[:, idx], label=f'True {variable}',
-               color=color, linewidth=2, alpha=0.8)
-        ax.plot(outputs[:, idx], label=f'Predicted {variable}',
-               color=color, linewidth=2, linestyle='--', alpha=0.8)
-
-    ax.set_xlabel('Time Step', fontsize=12)
-    ax.set_ylabel('Value', fontsize=12)
-    ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-    ax.grid(True, alpha=0.3)
-
-    plt.tight_layout()
-    plt.savefig(save_path, dpi=100, bbox_inches='tight')
-    plt.close(fig)
-
-
-def save_data_h5(targets: np.ndarray, outputs: np.ndarray, save_path: str) -> None:
-    """Save denormalized data to HDF5 file.
-
-    Args:
-        targets: Denormalized target values.
-        outputs: Denormalized output values.
-        save_path: Path to save the HDF5 file.
-    """
-    os.makedirs(os.path.dirname(save_path), exist_ok=True) if os.path.dirname(save_path) else None
-    with h5py.File(save_path, 'w') as f:
-        f.create_dataset("targets", data=targets, compression='gzip')
-        f.create_dataset("outputs", data=outputs, compression='gzip')
 
 
 def _log_message(logger: Optional[logging.Logger], message: str,
