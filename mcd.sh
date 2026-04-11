@@ -4,13 +4,17 @@
 # Runs up to MAX_JOBS processes concurrently.
 # When one finishes, the next config in the queue starts automatically.
 #
-# Usage:
-#   ./mcd.sh                           # Run all configs, epoch=best
-#   ./mcd.sh --config-file list.txt    # Run configs from file
-#   ./mcd.sh --max-jobs 4              # Limit to 4 parallel jobs
-#   ./mcd.sh --filter out12h           # Only configs matching "out12h"
-#   ./mcd.sh --dry-run                 # Print configs without running
-#   ./mcd.sh --epoch 10                    # Use epoch 10
+# Usage (config groups — io × model cross product):
+#   ./mcd.sh                                  # Run all io × model combos
+#   ./mcd.sh --filter out12h                  # Only io configs matching "out12h"
+#   ./mcd.sh --model transformer              # Only transformer model
+#   ./mcd.sh --filter in2d --model gnn_tcn    # Specific io + model
+#   ./mcd.sh --max-jobs 4                     # Limit to 4 parallel jobs
+#   ./mcd.sh --dry-run                        # Print configs without running
+#   ./mcd.sh --epoch 10                       # Use epoch 10
+#
+# Usage (file-based):
+#   ./mcd.sh --config-file list.txt           # Run configs from file
 
 set -e
 
@@ -23,6 +27,7 @@ cd "$SCRIPT_DIR"
 MAX_JOBS=8
 CONFIG_FILE=""
 FILTER=""
+MODEL_FILTER=""
 DRY_RUN=false
 EPOCH="best"
 
@@ -40,6 +45,10 @@ while [[ $# -gt 0 ]]; do
             FILTER="$2"
             shift 2
             ;;
+        --model)
+            MODEL_FILTER="$2"
+            shift 2
+            ;;
         --dry-run)
             DRY_RUN=true
             shift
@@ -50,7 +59,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: ./mcd.sh [--config-file FILE] [--max-jobs N] [--filter PATTERN] [--dry-run] [--epoch EPOCH]"
+            echo "Usage: ./mcd.sh [--config-file FILE] [--max-jobs N] [--filter PATTERN] [--model MODEL] [--dry-run] [--epoch EPOCH]"
             exit 1
             ;;
     esac
@@ -60,6 +69,7 @@ done
 # Collect configs
 # =============================================================================
 CONFIGS=()
+DISPLAY_NAMES=()
 
 if [[ -n "$CONFIG_FILE" ]]; then
     # Read from file (skip empty lines and comments)
@@ -67,22 +77,42 @@ if [[ -n "$CONFIG_FILE" ]]; then
         line=$(echo "$line" | sed 's/#.*//' | xargs)
         [[ -z "$line" ]] && continue
         CONFIGS+=("$line")
+        DISPLAY_NAMES+=("$line")
     done < "$CONFIG_FILE"
 else
-    # Glob from configs/ directory
-    for f in configs/in[123]d_out*.yaml; do
-        name=$(basename "$f" .yaml)
-        if [[ -n "$FILTER" && ! "$name" =~ $FILTER ]]; then
+    # Config group mode: io × model cross product
+    IO_CONFIGS=()
+    for f in configs/io/*.yaml; do
+        io_name=$(basename "$f" .yaml)
+        if [[ -n "$FILTER" && ! "$io_name" =~ $FILTER ]]; then
             continue
         fi
-        CONFIGS+=("$name")
+        IO_CONFIGS+=("$io_name")
     done
-    IFS=$'\n' CONFIGS=($(sort <<<"${CONFIGS[*]}")); unset IFS
+    IFS=$'\n' IO_CONFIGS=($(sort <<<"${IO_CONFIGS[*]}")); unset IFS
+
+    MODEL_CONFIGS=()
+    for f in configs/model/*.yaml; do
+        model_name=$(basename "$f" .yaml)
+        if [[ -n "$MODEL_FILTER" && "$model_name" != "$MODEL_FILTER" ]]; then
+            continue
+        fi
+        MODEL_CONFIGS+=("$model_name")
+    done
+    IFS=$'\n' MODEL_CONFIGS=($(sort <<<"${MODEL_CONFIGS[*]}")); unset IFS
+
+    for io in "${IO_CONFIGS[@]}"; do
+        for mdl in "${MODEL_CONFIGS[@]}"; do
+            exp_name="${io}_${mdl}"
+            CONFIGS+=("+io=${io} +model=${mdl} experiment.name=${exp_name}")
+            DISPLAY_NAMES+=("${exp_name}")
+        done
+    done
 fi
 
 TOTAL=${#CONFIGS[@]}
 if [[ $TOTAL -eq 0 ]]; then
-    echo "No configs found (config-file: '$CONFIG_FILE', filter: '$FILTER')"
+    echo "No configs found (config-file: '$CONFIG_FILE', filter: '$FILTER', model: '$MODEL_FILTER')"
     exit 1
 fi
 
@@ -91,15 +121,21 @@ echo "Parallel MCD Analysis Runner"
 echo "========================================"
 echo "Total configs: $TOTAL"
 echo "Max parallel:  $MAX_JOBS"
-echo "Source:        ${CONFIG_FILE:-glob (filter: ${FILTER:-none})}"
+if [[ -n "$CONFIG_FILE" ]]; then
+    echo "Source:        $CONFIG_FILE"
+else
+    echo "Mode:          config groups (io × model)"
+fi
+echo "Filter:        ${FILTER:-none}"
+echo "Model:         ${MODEL_FILTER:-all}"
 echo "Epoch:         $EPOCH"
 echo "========================================"
 echo ""
 
 if $DRY_RUN; then
     echo "[DRY RUN] Configs to run:"
-    for cfg in "${CONFIGS[@]}"; do
-        echo "  $cfg"
+    for name in "${DISPLAY_NAMES[@]}"; do
+        echo "  $name"
     done
     echo ""
     echo "Total: $TOTAL configs"
@@ -149,17 +185,28 @@ wait_for_slot() {
     done
 }
 
-for cfg in "${CONFIGS[@]}"; do
+for idx in "${!CONFIGS[@]}"; do
+    cfg="${CONFIGS[$idx]}"
+    display_name="${DISPLAY_NAMES[$idx]}"
+
     wait_for_slot
 
     STARTED=$((STARTED + 1))
-    echo "[START] $cfg  ($STARTED/$TOTAL, running: ${#RUNNING_PIDS[@]}+1)"
+    echo "[START] $display_name  ($STARTED/$TOTAL, running: ${#RUNNING_PIDS[@]}+1)"
 
-    python analysis/run_mcd.py --config-name="$cfg" mcd.epoch="$EPOCH" \
-        > "$LOG_DIR/${cfg}.log" 2>&1 &
+    if [[ -n "$CONFIG_FILE" ]]; then
+        # File mode: config name passed as --config-name
+        python analysis/run_mcd.py --config-name="$cfg" mcd.epoch="$EPOCH" \
+            > "$LOG_DIR/${display_name}.log" 2>&1 &
+    else
+        # Config group mode: overrides passed as positional args
+        # shellcheck disable=SC2086
+        python analysis/run_mcd.py --config-name=local $cfg mcd.epoch="$EPOCH" \
+            > "$LOG_DIR/${display_name}.log" 2>&1 &
+    fi
 
     RUNNING_PIDS+=($!)
-    RUNNING_NAMES+=("$cfg")
+    RUNNING_NAMES+=("$display_name")
 done
 
 for i in "${!RUNNING_PIDS[@]}"; do
