@@ -7,6 +7,7 @@ Usage:
     python scripts/train.py --config-name=local model.model_type=tcn
 """
 
+import logging
 import os
 import sys
 from multiprocessing import freeze_support
@@ -16,6 +17,8 @@ import hydra
 
 # Add parent directory to path for src imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+logger = logging.getLogger(__name__)
 
 from src.pipeline import create_dataloader
 from src.networks import create_model
@@ -78,7 +81,7 @@ def create_scheduler(config, optimizer):
         T_mult = cosine_cfg.T_mult if cosine_cfg else 2
         eta_min = cosine_cfg.eta_min if cosine_cfg else 1e-6
 
-        print(f"Scheduler: CosineAnnealingWarmRestarts (T_0={T_0}, T_mult={T_mult})")
+        logger.info(f"Scheduler: CosineAnnealingWarmRestarts (T_0={T_0}, T_mult={T_mult})")
         return optim.lr_scheduler.CosineAnnealingWarmRestarts(
             optimizer,
             T_0=T_0,
@@ -87,7 +90,7 @@ def create_scheduler(config, optimizer):
         )
     else:
         # ReduceLROnPlateau (default): loss 정체 시 LR 감소
-        print(f"Scheduler: ReduceLROnPlateau (factor={config.training.scheduler_factor})")
+        logger.info(f"Scheduler: ReduceLROnPlateau (factor={config.training.scheduler_factor})")
         return optim.lr_scheduler.ReduceLROnPlateau(
             optimizer,
             mode='min',
@@ -118,23 +121,37 @@ def main(config):
     log_dir = os.path.join(experiment_dir, "log")
     os.makedirs(log_dir, exist_ok=True)
 
-    # Print configuration summary
+    # Configure logging: console + file
+    log_file = os.path.join(log_dir, "training.log")
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler(log_file, mode='a'),
+        ],
+        force=True,
+    )
+
+    # Configuration summary
     model_type = config.model.model_type
-    print(f"Experiment: {experiment_name}")
-    print(f"Model type: {model_type}")
-    print(f"Device: {device}")
+    logger.info(f"Experiment: {experiment_name}")
+    logger.info(f"Model type: {model_type}")
+    logger.info(f"Device: {device}")
+    logger.info(f"Log file: {log_file}")
 
     # Create dataloaders
     train_dataloader = create_dataloader(config, phase="train")
     val_dataloader = create_dataloader(config, phase="validation")
-    print(f"Training dataloader: {len(train_dataloader.dataset)} samples, {len(train_dataloader)} batches")
-    print(f"Validation dataloader: {len(val_dataloader.dataset)} samples, {len(val_dataloader)} batches")
+    logger.info(f"Training dataloader: {len(train_dataloader.dataset)} samples, {len(train_dataloader)} batches")
+    logger.info(f"Validation dataloader: {len(val_dataloader.dataset)} samples, {len(val_dataloader)} batches")
 
     # Create model
     model = create_model(config).to(device)
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"Model: {total_params:,} total params, {trainable_params:,} trainable")
+    logger.info(f"Model: {total_params:,} total params, {trainable_params:,} trainable")
 
     # Load pretrained checkpoint if specified (for two-stage training)
     pretrained_path = getattr(config.training, 'pretrained_checkpoint', None)
@@ -147,20 +164,20 @@ def main(config):
                 model.load_state_dict(checkpoint['model_state_dict'])
             else:
                 model.load_state_dict(checkpoint)
-            print(f"Loaded pretrained checkpoint: {full_path}")
+            logger.info(f"Loaded pretrained checkpoint: {full_path}")
         else:
-            print(f"Warning: Pretrained checkpoint not found: {full_path}")
+            logger.warning(f"Pretrained checkpoint not found: {full_path}")
 
     # Create optimizer and scheduler
     optimizer = create_optimizer(config, model)
     scheduler = create_scheduler(config, optimizer)
     weight_decay = getattr(config.training, 'weight_decay', 0.0)
-    print(f"Optimizer: {config.training.optimizer.upper()}, LR: {config.training.learning_rate}, WD: {weight_decay}")
+    logger.info(f"Optimizer: {config.training.optimizer.upper()}, LR: {config.training.learning_rate}, WD: {weight_decay}")
 
     # Create loss functions (pass statistics for weighted loss denormalization)
     stat_dict = getattr(train_dataloader.dataset, 'stat_dict', None)
     criterion, contrastive_criterion = create_loss_functions(config, stat_dict=stat_dict)
-    print(f"Loss: {config.training.regression_loss_type}, Contrastive: {config.training.contrastive_loss_type}")
+    logger.info(f"Loss: {config.training.regression_loss_type}, Contrastive: {config.training.contrastive_loss_type}")
 
     # Create trainer
     trainer = Trainer(
@@ -171,7 +188,7 @@ def main(config):
         criterion=criterion,
         contrastive_criterion=contrastive_criterion,
         device=device,
-        logger=None
+        logger=logger
     )
 
     try:
@@ -183,15 +200,15 @@ def main(config):
         )
 
         # Save results
-        save_training_history(history, config, None)
-        plot_training_curves(history, config, None)
+        save_training_history(history, config, logger)
+        plot_training_curves(history, config, logger)
 
-        print("Training completed successfully")
+        logger.info("Training completed successfully")
 
     except KeyboardInterrupt:
-        print("Training interrupted by user")
+        logger.warning("Training interrupted by user")
     except Exception as e:
-        print(f"Training failed: {e}")
+        logger.error(f"Training failed: {e}")
         raise
 
 
