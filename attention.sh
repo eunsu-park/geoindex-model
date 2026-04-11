@@ -21,6 +21,9 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# Prevent non-matching globs from returning literal patterns
+shopt -s nullglob
+
 # =============================================================================
 # Arguments
 # =============================================================================
@@ -89,7 +92,7 @@ else
         fi
         IO_CONFIGS+=("$io_name")
     done
-    IFS=$'\n' IO_CONFIGS=($(sort <<<"${IO_CONFIGS[*]}")); unset IFS
+    IO_CONFIGS=($(printf '%s\n' "${IO_CONFIGS[@]}" | sort))
 
     MODEL_CONFIGS=()
     for f in configs/model/*.yaml; do
@@ -99,7 +102,7 @@ else
         fi
         MODEL_CONFIGS+=("$model_name")
     done
-    IFS=$'\n' MODEL_CONFIGS=($(sort <<<"${MODEL_CONFIGS[*]}")); unset IFS
+    MODEL_CONFIGS=($(printf '%s\n' "${MODEL_CONFIGS[@]}" | sort))
 
     for io in "${IO_CONFIGS[@]}"; do
         for mdl in "${MODEL_CONFIGS[@]}"; do
@@ -165,8 +168,7 @@ wait_for_slot() {
                 NEW_PIDS+=("$pid")
                 NEW_NAMES+=("$name")
             else
-                wait "$pid"
-                code=$?
+                wait "$pid" && code=0 || code=$?
                 COMPLETED=$((COMPLETED + 1))
                 if [[ $code -eq 0 ]]; then
                     echo "[DONE]  $name  ($COMPLETED/$TOTAL completed)"
@@ -212,8 +214,7 @@ done
 for i in "${!RUNNING_PIDS[@]}"; do
     pid=${RUNNING_PIDS[$i]}
     name=${RUNNING_NAMES[$i]}
-    wait "$pid"
-    code=$?
+    wait "$pid" && code=0 || code=$?
     COMPLETED=$((COMPLETED + 1))
     if [[ $code -eq 0 ]]; then
         echo "[DONE]  $name  ($COMPLETED/$TOTAL completed)"
