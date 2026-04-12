@@ -55,7 +55,6 @@ regression-sw/
 │   │   ├── in1d_out6h.yaml ... in3d_out24h.yaml
 │   ├── model/              # Model configs (9) / 모델 설정
 │   │   ├── linear.yaml, transformer.yaml, gnn_transformer.yaml ...
-│   ├── archive/            # Legacy flat configs / 이전 flat 설정
 │   └── experiments/        # Experiment overrides / 실험 오버라이드
 ├── src/                    # Core modules / 핵심 모듈
 │   ├── networks/           # Model architectures (package) / 모델 아키텍처 (패키지)
@@ -74,9 +73,12 @@ regression-sw/
 ├── tests/                  # Unit tests (156 tests) / 단위 테스트
 ├── train.sh                # Parallel training runner / 병렬 훈련 실행기
 ├── validation.sh           # Parallel validation runner / 병렬 검증 실행기
-├── DATASET_GUIDE.md        # Data format docs / 데이터 형식 문서
-├── MODEL_GUIDE.md          # Model architecture docs / 모델 아키텍처 문서
-└── EXPERIMENTS.md          # Experiment log / 실험 기록
+└── docs/                   # Documentation / 문서
+    ├── DATASET_GUIDE.md    # Data format docs / 데이터 형식 문서
+    ├── MODEL_GUIDE.md      # Model architecture docs / 모델 아키텍처 문서
+    ├── EXPERIMENTS.md      # Experiment log / 실험 기록
+    ├── ANALYSIS.md         # Analysis tools guide / 분석 도구 가이드
+    └── DATA_FORMAT_ANALYSIS.md  # Data format comparison / 데이터 형식 비교
 ```
 
 ---
@@ -86,7 +88,7 @@ regression-sw/
 Current dataset: CSV-based 30-min solar wind time series from `setup-sw-db`.
 현재 데이터셋: `setup-sw-db`에서 생성된 CSV 기반 30분 간격 태양풍 시계열.
 
-See / 상세: [DATASET_GUIDE.md](DATASET_GUIDE.md)
+See / 상세: [DATASET_GUIDE.md](docs/DATASET_GUIDE.md)
 
 - **22 input variables / 22개 입력 변수**: solar wind (v, np, t, bx, by, bz, bt) × (avg/min/max) + ap30
 - **Target / 타겟**: ap30 (30-min equivalent amplitude geomagnetic index / 30분 등가진폭 지자기 지수)
@@ -96,7 +98,7 @@ See / 상세: [DATASET_GUIDE.md](DATASET_GUIDE.md)
 
 ## Models / 모델 (9종)
 
-See / 상세: [MODEL_GUIDE.md](MODEL_GUIDE.md)
+See / 상세: [MODEL_GUIDE.md](docs/MODEL_GUIDE.md)
 
 | # | Config Suffix | Type | Description / 설명 |
 |---|--------------|------|-------------------|
@@ -117,7 +119,7 @@ See / 상세: [MODEL_GUIDE.md](MODEL_GUIDE.md)
 81 experiments = 9 models × 3 inputs (1d/2d/3d) × 3 outputs (6h/12h/24h)
 81개 실험 = 9모델 × 3입력 × 3출력
 
-See / 상세: [EXPERIMENTS.md](EXPERIMENTS.md)
+See / 상세: [EXPERIMENTS.md](docs/EXPERIMENTS.md)
 
 ---
 
@@ -161,7 +163,7 @@ python scripts/train.py --config-name=local +io=in3d_out24h +model=gnn_patchtst
 Post-training analysis tools for model interpretability and evaluation.
 훈련 후 모델 해석 및 평가를 위한 분석 도구.
 
-See / 상세: [ANALYSIS.md](ANALYSIS.md)
+See / 상세: [ANALYSIS.md](docs/ANALYSIS.md)
 
 ### Primary Analysis (require checkpoint + data) / 주요 분석 (체크포인트 + 데이터 필요)
 
