@@ -4,17 +4,13 @@
 # Runs up to MAX_JOBS processes concurrently.
 # When one finishes, the next config in the queue starts automatically.
 #
-# Usage (new — config groups):
+# Usage (config groups — io × model cross product):
 #   ./train.sh                                  # Run all io × model combos
 #   ./train.sh --filter out12h                  # Only io configs matching "out12h"
 #   ./train.sh --model transformer              # Only transformer model
 #   ./train.sh --filter in2d --model gnn_tcn    # Specific io + model
 #   ./train.sh --max-jobs 4                     # Limit to 4 parallel jobs
 #   ./train.sh --dry-run                        # Print configs without running
-#
-# Usage (legacy — flat config files in configs/archive/):
-#   ./train.sh --legacy                         # Run all archived flat configs
-#   ./train.sh --legacy --filter out12h         # Filter archived configs
 #
 # Usage (file-based):
 #   ./train.sh --config-file list.txt           # Run configs from file
@@ -35,7 +31,6 @@ CONFIG_FILE=""
 FILTER=""
 MODEL_FILTER=""
 DRY_RUN=false
-LEGACY=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -59,13 +54,9 @@ while [[ $# -gt 0 ]]; do
             DRY_RUN=true
             shift
             ;;
-        --legacy)
-            LEGACY=true
-            shift
-            ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: ./train.sh [--config-file FILE] [--max-jobs N] [--filter PATTERN] [--model MODEL] [--legacy] [--dry-run]"
+            echo "Usage: ./train.sh [--config-file FILE] [--max-jobs N] [--filter PATTERN] [--model MODEL] [--dry-run]"
             exit 1
             ;;
     esac
@@ -74,9 +65,6 @@ done
 # =============================================================================
 # Collect configs
 # =============================================================================
-# Each entry is either:
-#   - legacy mode: a config name (e.g. "in2d_out12h_transformer")
-#   - group mode:  "io=in2d_out12h model=transformer" (space-separated overrides)
 CONFIGS=()
 DISPLAY_NAMES=()
 
@@ -88,18 +76,6 @@ if [[ -n "$CONFIG_FILE" ]]; then
         CONFIGS+=("$line")
         DISPLAY_NAMES+=("$line")
     done < "$CONFIG_FILE"
-elif $LEGACY; then
-    # Legacy mode: glob from configs/archive/
-    for f in configs/archive/in[123]d_out*.yaml; do
-        name=$(basename "$f" .yaml)
-        if [[ -n "$FILTER" && ! "$name" =~ $FILTER ]]; then
-            continue
-        fi
-        CONFIGS+=("$name")
-        DISPLAY_NAMES+=("$name")
-    done
-    CONFIGS=($(printf '%s\n' "${CONFIGS[@]}" | sort))
-    DISPLAY_NAMES=($(printf '%s\n' "${DISPLAY_NAMES[@]}" | sort))
 else
     # New config group mode: io × model cross product
     IO_CONFIGS=()
@@ -142,9 +118,7 @@ echo "Parallel Training Runner"
 echo "========================================"
 echo "Total configs: $TOTAL"
 echo "Max parallel:  $MAX_JOBS"
-if $LEGACY; then
-    echo "Mode:          legacy (archive)"
-elif [[ -n "$CONFIG_FILE" ]]; then
+if [[ -n "$CONFIG_FILE" ]]; then
     echo "Source:        $CONFIG_FILE"
 else
     echo "Mode:          config groups (io × model)"
@@ -215,8 +189,8 @@ for idx in "${!CONFIGS[@]}"; do
     STARTED=$((STARTED + 1))
     echo "[START] $display_name  ($STARTED/$TOTAL, running: ${#RUNNING_PIDS[@]}+1)"
 
-    if $LEGACY || [[ -n "$CONFIG_FILE" ]]; then
-        # Legacy / file mode: config name passed as --config-name
+    if [[ -n "$CONFIG_FILE" ]]; then
+        # File mode: config name passed as --config-name
         python scripts/train.py --config-name="$cfg" \
             > "$LOG_DIR/${display_name}.log" 2>&1 &
     else
