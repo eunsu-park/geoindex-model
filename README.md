@@ -36,6 +36,7 @@ python scripts/train.py --config-name=local +io=in1d_out6h +model=linear
 # Train specific subset / 특정 부분만 훈련
 ./train.sh --filter out12h          # 12h output only
 ./train.sh --model transformer      # Transformer only
+./train.sh --filter "in(6|12)h"     # Regex supported / 정규식 지원
 ./train.sh --max-jobs 4             # Limit parallel jobs / 병렬 작업 제한
 
 # Validate all / 전체 검증

@@ -9,6 +9,7 @@
 #   ./train.sh --filter out12h                  # Only io configs matching "out12h"
 #   ./train.sh --model transformer              # Only transformer model
 #   ./train.sh --filter in2d --model gnn_tcn    # Specific io + model
+#   ./train.sh --filter "in(6|12)h_out(6|12)h"  # Regex pattern supported
 #   ./train.sh --max-jobs 4                     # Limit to 4 parallel jobs
 #   ./train.sh --dry-run                        # Print configs without running
 #
