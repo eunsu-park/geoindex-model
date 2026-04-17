@@ -197,7 +197,9 @@ reap_finished() {
 wait_for_slot() {
     while [[ ${#RUNNING_PIDS[@]} -ge $MAX_JOBS ]]; do
         reap_finished
-        [[ ${#RUNNING_PIDS[@]} -ge $MAX_JOBS ]] && sleep 5
+        if [[ ${#RUNNING_PIDS[@]} -ge $MAX_JOBS ]]; then
+            sleep 5
+        fi
     done
 }
 
@@ -226,7 +228,9 @@ done
 # Drain remaining jobs
 while [[ ${#RUNNING_PIDS[@]} -gt 0 ]]; do
     reap_finished
-    [[ ${#RUNNING_PIDS[@]} -gt 0 ]] && sleep 5
+    if [[ ${#RUNNING_PIDS[@]} -gt 0 ]]; then
+        sleep 5
+    fi
 done
 
 echo ""
