@@ -1,16 +1,23 @@
 #!/bin/bash
-# Temporary runner for remaining MCD + attention analyses.
+# Run pending validation / MCD / attention jobs in parallel.
 #
-# Scans save_root for missing outputs and runs only the missing io x model
-# combinations in parallel. Safe to re-run — completed experiments are skipped.
+# Scans save_root for missing outputs across the io x model matrix and
+# executes only the combinations whose expected artifact is absent.
+# Safe to re-run — completed experiments are skipped automatically.
+#
+# Completion markers (per phase, under {save_root}/{experiment}/):
+#   validation/{epoch}/validation_results.csv
+#   mcd/{epoch}/npz.zip
+#   attention/{epoch}/npz.zip   (only for transformer, patchtst,
+#                                gnn_transformer, gnn_patchtst)
 #
 # Usage:
-#   ./run_remaining_analysis.sh                    # Run all missing (mcd + attention)
-#   ./run_remaining_analysis.sh --only mcd         # MCD only
-#   ./run_remaining_analysis.sh --only attention   # Attention only
-#   ./run_remaining_analysis.sh --dry-run          # Print task list, do not run
-#   SAVE_ROOT=/custom/path ./run_remaining_analysis.sh
-#   ./run_remaining_analysis.sh --epoch best       # Checkpoint epoch (default: best)
+#   ./run_pending.sh                              # validation + mcd + attention
+#   ./run_pending.sh --phases mcd,attention       # subset (comma-separated)
+#   ./run_pending.sh --phases validation          # single phase
+#   ./run_pending.sh --dry-run                    # print tasks, do not execute
+#   ./run_pending.sh --max-jobs 4 --epoch best
+#   SAVE_ROOT=/custom/path ./run_pending.sh       # override results root
 
 set -e
 
@@ -23,15 +30,24 @@ cd "$SCRIPT_DIR"
 MAX_JOBS=8
 EPOCH="best"
 DRY_RUN=false
-ONLY=""
+PHASES="validation,mcd,attention"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --max-jobs) MAX_JOBS="$2"; shift 2 ;;
         --epoch)    EPOCH="$2"; shift 2 ;;
-        --only)     ONLY="$2"; shift 2 ;;
+        --phases)   PHASES="$2"; shift 2 ;;
         --dry-run)  DRY_RUN=true; shift ;;
         *) echo "Unknown option: $1"; exit 1 ;;
+    esac
+done
+
+# Validate requested phases
+IFS=',' read -r -a PHASE_LIST <<< "$PHASES"
+for p in "${PHASE_LIST[@]}"; do
+    case $p in
+        validation|mcd|attention) ;;
+        *) echo "Invalid phase: $p (allowed: validation, mcd, attention)"; exit 1 ;;
     esac
 done
 
@@ -65,55 +81,78 @@ ALL_MODELS=(linear transformer tcn patchtst timesnet
             gnn_transformer gnn_tcn gnn_bilstm gnn_patchtst)
 ATTN_MODELS=(transformer patchtst gnn_transformer gnn_patchtst)
 
+# Phase -> completion marker (relative to {save_root}/{experiment}/)
+marker_for_phase() {
+    case $1 in
+        validation) echo "validation/${EPOCH}/validation_results.csv" ;;
+        mcd)        echo "mcd/${EPOCH}/npz.zip" ;;
+        attention)  echo "attention/${EPOCH}/npz.zip" ;;
+    esac
+}
+
+# Phase -> python entry script
+runner_for_phase() {
+    case $1 in
+        validation) echo "scripts/validate.py" ;;
+        mcd)        echo "analysis/run_mcd.py" ;;
+        attention)  echo "analysis/run_attention.py" ;;
+    esac
+}
+
+# Phase -> applicable models
+models_for_phase() {
+    case $1 in
+        attention) echo "${ATTN_MODELS[@]}" ;;
+        *)         echo "${ALL_MODELS[@]}" ;;
+    esac
+}
+
 # =============================================================================
-# Detect missing tasks
+# Detect pending tasks
 # =============================================================================
 TASKS=()
 
-run_mcd=true
-run_attn=true
-case "$ONLY" in
-    mcd)       run_attn=false ;;
-    attention) run_mcd=false ;;
-    "")        ;;
-    *) echo "Invalid --only value: $ONLY (use mcd or attention)"; exit 1 ;;
-esac
-
-for io in "${IO_CONFIGS[@]}"; do
-    if $run_mcd; then
-        for m in "${ALL_MODELS[@]}"; do
-            out="$SAVE_ROOT/${io}_${m}/mcd/${EPOCH}/npz.zip"
-            [[ -f "$out" ]] || TASKS+=("mcd:${io}:${m}")
+for phase in "${PHASE_LIST[@]}"; do
+    marker=$(marker_for_phase "$phase")
+    read -r -a models <<< "$(models_for_phase "$phase")"
+    for io in "${IO_CONFIGS[@]}"; do
+        for m in "${models[@]}"; do
+            if [[ ! -f "$SAVE_ROOT/${io}_${m}/${marker}" ]]; then
+                TASKS+=("${phase}:${io}:${m}")
+            fi
         done
-    fi
-    if $run_attn; then
-        for m in "${ATTN_MODELS[@]}"; do
-            out="$SAVE_ROOT/${io}_${m}/attention/${EPOCH}/npz.zip"
-            [[ -f "$out" ]] || TASKS+=("attention:${io}:${m}")
-        done
-    fi
+    done
 done
 
 TOTAL=${#TASKS[@]}
 
 echo "========================================"
-echo "Remaining Analysis Runner"
+echo "Pending Analysis Runner"
 echo "========================================"
 echo "Save root:     $SAVE_ROOT"
-echo "Only:          ${ONLY:-mcd+attention}"
+echo "Phases:        $PHASES"
 echo "Epoch:         $EPOCH"
 echo "Max parallel:  $MAX_JOBS"
-echo "Missing tasks: $TOTAL"
+echo "Pending tasks: $TOTAL"
 echo "========================================"
 
 if [[ $TOTAL -eq 0 ]]; then
-    echo "All targets already have outputs. Nothing to do."
+    echo "All targets already complete. Nothing to do."
     exit 0
 fi
 
+# Per-phase summary
+for phase in "${PHASE_LIST[@]}"; do
+    cnt=0
+    for t in "${TASKS[@]}"; do
+        [[ "${t%%:*}" == "$phase" ]] && cnt=$((cnt + 1))
+    done
+    printf "  %-11s %d\n" "$phase:" "$cnt"
+done
+echo ""
+
 if $DRY_RUN; then
-    echo ""
-    echo "[DRY RUN] Missing tasks:"
+    echo "[DRY RUN] Pending tasks:"
     for t in "${TASKS[@]}"; do echo "  $t"; done
     exit 0
 fi
@@ -121,7 +160,7 @@ fi
 # =============================================================================
 # Parallel execution
 # =============================================================================
-LOG_DIR="$HOME/tmp/remaining_analysis_logs"
+LOG_DIR="$HOME/tmp/pending_analysis_logs"
 mkdir -p "$LOG_DIR"
 
 RUNNING_PIDS=()
@@ -175,7 +214,8 @@ for t in "${TASKS[@]}"; do
     STARTED=$((STARTED + 1))
     echo "[START] $name  ($STARTED/$TOTAL, running: $((${#RUNNING_PIDS[@]} + 1)))"
 
-    python "analysis/run_${phase}.py" --config-name=local \
+    runner=$(runner_for_phase "$phase")
+    python "$runner" --config-name=local \
         "+io=${io}" "+model=${mdl}" "experiment.name=${exp}" \
         "${phase}.epoch=${EPOCH}" \
         > "$LOG_DIR/${name}.log" 2>&1 &
@@ -191,7 +231,7 @@ done
 
 echo ""
 echo "========================================"
-echo "Remaining Analysis Complete"
+echo "Pending Analysis Complete"
 echo "========================================"
 echo "Total:     $TOTAL"
 echo "Succeeded: $((COMPLETED - FAILED))"
