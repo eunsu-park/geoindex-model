@@ -17,6 +17,7 @@
 #   ./run_pending.sh --phases validation          # single phase
 #   ./run_pending.sh --dry-run                    # print tasks, do not execute
 #   ./run_pending.sh --max-jobs 4 --epoch best
+#   ./run_pending.sh --config-name dev            # use configs/dev.yaml (default: local)
 #   SAVE_ROOT=/custom/path ./run_pending.sh       # override results root
 
 set -e
@@ -31,13 +32,15 @@ MAX_JOBS=8
 EPOCH="best"
 DRY_RUN=false
 PHASES="validation,mcd,attention"
+CONFIG_NAME="local"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --max-jobs) MAX_JOBS="$2"; shift 2 ;;
-        --epoch)    EPOCH="$2"; shift 2 ;;
-        --phases)   PHASES="$2"; shift 2 ;;
-        --dry-run)  DRY_RUN=true; shift ;;
+        --max-jobs)    MAX_JOBS="$2"; shift 2 ;;
+        --epoch)       EPOCH="$2"; shift 2 ;;
+        --phases)      PHASES="$2"; shift 2 ;;
+        --dry-run)     DRY_RUN=true; shift ;;
+        --config-name) CONFIG_NAME="$2"; shift 2 ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
@@ -54,14 +57,19 @@ done
 # =============================================================================
 # Resolve save_root
 # =============================================================================
+CONFIG_FILE_PATH="configs/${CONFIG_NAME}.yaml"
 if [[ -z "${SAVE_ROOT:-}" ]]; then
-    SAVE_ROOT=$(grep -E "^\s*save_root:" configs/local.yaml \
+    if [[ ! -f "$CONFIG_FILE_PATH" ]]; then
+        echo "ERROR: Config file not found: $CONFIG_FILE_PATH"
+        exit 1
+    fi
+    SAVE_ROOT=$(grep -E "^\s*save_root:" "$CONFIG_FILE_PATH" \
         | head -1 \
         | sed -E 's/.*save_root:[[:space:]]*"?([^"]*)"?.*/\1/')
 fi
 if [[ -z "$SAVE_ROOT" || ! -d "$SAVE_ROOT" ]]; then
     echo "ERROR: SAVE_ROOT not found or invalid: '$SAVE_ROOT'"
-    echo "Set SAVE_ROOT env var or fix configs/local.yaml."
+    echo "Set SAVE_ROOT env var or fix $CONFIG_FILE_PATH."
     exit 1
 fi
 
@@ -130,6 +138,7 @@ echo "========================================"
 echo "Pending Analysis Runner"
 echo "========================================"
 echo "Save root:     $SAVE_ROOT"
+echo "Config name:   $CONFIG_NAME"
 echo "Phases:        $PHASES"
 echo "Epoch:         $EPOCH"
 echo "Max parallel:  $MAX_JOBS"
@@ -217,7 +226,7 @@ for t in "${TASKS[@]}"; do
     echo "[START] $name  ($STARTED/$TOTAL, running: $((${#RUNNING_PIDS[@]} + 1)))"
 
     runner=$(runner_for_phase "$phase")
-    python "$runner" --config-name=local \
+    python "$runner" --config-name="$CONFIG_NAME" \
         "+io=${io}" "+model=${mdl}" "experiment.name=${exp}" \
         "${phase}.epoch=${EPOCH}" \
         > "$LOG_DIR/${name}.log" 2>&1 &

@@ -12,6 +12,7 @@
 #   ./mcd.sh --max-jobs 4                     # Limit to 4 parallel jobs
 #   ./mcd.sh --dry-run                        # Print configs without running
 #   ./mcd.sh --epoch 10                       # Use epoch 10
+#   ./mcd.sh --config-name dev                # Use configs/dev.yaml (default: local)
 #
 # Usage (file-based):
 #   ./mcd.sh --config-file list.txt           # Run configs from file
@@ -33,6 +34,7 @@ FILTER=""
 MODEL_FILTER=""
 DRY_RUN=false
 EPOCH="best"
+CONFIG_NAME="local"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -60,9 +62,13 @@ while [[ $# -gt 0 ]]; do
             EPOCH="$2"
             shift 2
             ;;
+        --config-name)
+            CONFIG_NAME="$2"
+            shift 2
+            ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: ./mcd.sh [--config-file FILE] [--max-jobs N] [--filter PATTERN] [--model MODEL] [--dry-run] [--epoch EPOCH]"
+            echo "Usage: ./mcd.sh [--config-file FILE] [--max-jobs N] [--filter PATTERN] [--model MODEL] [--dry-run] [--epoch EPOCH] [--config-name NAME]"
             exit 1
             ;;
     esac
@@ -132,6 +138,7 @@ fi
 echo "Filter:        ${FILTER:-none}"
 echo "Model:         ${MODEL_FILTER:-all}"
 echo "Epoch:         $EPOCH"
+echo "Config name:   $CONFIG_NAME"
 echo "========================================"
 echo ""
 
@@ -203,7 +210,7 @@ for idx in "${!CONFIGS[@]}"; do
     else
         # Config group mode: overrides passed as positional args
         # shellcheck disable=SC2086
-        python analysis/run_mcd.py --config-name=local $cfg mcd.epoch="$EPOCH" \
+        python analysis/run_mcd.py --config-name="$CONFIG_NAME" $cfg mcd.epoch="$EPOCH" \
             > "$LOG_DIR/${display_name}.log" 2>&1 &
     fi
 
