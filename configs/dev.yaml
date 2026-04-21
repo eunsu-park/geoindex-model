@@ -1,0 +1,82 @@
+# Dev Configuration (local Mac with OneDrive-synced dataset)
+# Inherits every override from local.yaml and only replaces the environment paths.
+
+defaults:
+  - local
+  - _self_
+
+# =============================================================================
+# Environment (local Mac, OneDrive-synced dataset/results)
+# =============================================================================
+environment:
+  device: "mps"
+  data_root: "/Users/eunsupark/OneDrive/SHARE/AP/dataset"
+  save_root: "/Users/eunsupark/OneDrive/SHARE/AP/results"
+  num_workers: 8
+
+# =============================================================================
+# Data (Directory mode)
+# =============================================================================
+data:
+  timeseries:
+    days_before: 5
+    days_after: 3
+
+    # Table mode (default): single Parquet + index, zero disk I/O per sample
+    dataset_mode: "table"
+    table_file: "data.parquet"
+    train_index: "total/train_index.csv"
+    validation_index: "total/validation_index.csv"
+    test_index: "total/test_index.csv"
+    input_start: -240
+    input_end: 0
+    target_start: 0
+    target_end: 144
+
+    # CSV mode: override via CLI if needed
+    # dataset_mode: "csv"
+    # train_dir: "train"
+    # validation_dir: "validation"
+
+# =============================================================================
+# Training (Local dev settings - fewer epochs, frequent saves)
+# =============================================================================
+experiment:
+  batch_size: 128
+
+training:
+  epochs: 30
+  model_save_freq: 5
+  report_freq: 200
+
+# =============================================================================
+# Validation (epoch-based path resolution)
+# Just set epoch - paths auto-generated from save_root/experiment.name
+# =============================================================================
+validation:
+  epoch: 10
+
+# =============================================================================
+# Test (epoch-based path resolution)
+# =============================================================================
+test:
+  epoch: 10
+
+# =============================================================================
+# Monte Carlo Dropout (epoch-based path resolution)
+# =============================================================================
+mcd:
+  epoch: 10
+
+# =============================================================================
+# Saliency Analysis (epoch-based path resolution)
+# =============================================================================
+saliency:
+  epoch: 10
+
+# =============================================================================
+# Attention Analysis (epoch-based path resolution)
+# =============================================================================
+attention:
+  epoch: 10
+  create_plots: true
