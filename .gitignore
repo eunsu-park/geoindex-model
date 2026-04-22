@@ -42,7 +42,7 @@ CLAUDE.md
 # Rendered docs (HTML exports)
 *.html
 
-# Project-specific
-tmp.py
-*.out
+# Logs / runtime / scratch
 *.log
+*.out
+tmp.py
