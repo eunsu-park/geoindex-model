@@ -85,8 +85,9 @@ IO_CONFIGS=(
     in3d_out6h  in3d_out12h  in3d_out18h  in3d_out24h
 )
 
-ALL_MODELS=(linear transformer tcn patchtst timesnet
-            gnn_transformer gnn_tcn gnn_bilstm gnn_patchtst)
+ALL_MODELS=(linear transformer tcn patchtst timesnet lstm bilstm
+            gnn_transformer gnn_tcn gnn_bilstm gnn_patchtst
+            gnn_lstm gnn_timesnet gnn_linear)
 ATTN_MODELS=(transformer patchtst gnn_transformer gnn_patchtst)
 
 # Phase -> completion marker (relative to {save_root}/{experiment}/)
