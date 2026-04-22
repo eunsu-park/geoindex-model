@@ -39,6 +39,9 @@ htmlcov/
 .claude/
 CLAUDE.md
 
+# Rendered docs (HTML exports)
+*.html
+
 # Project-specific
 tmp.py
 *.out
