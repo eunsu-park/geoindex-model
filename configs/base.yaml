@@ -306,9 +306,10 @@ data:
 # =============================================================================
 model:
   # Model type selection:
-  # Time series only: "transformer", "tcn", "linear"
+  # Time series only: "transformer", "tcn", "linear", "patchtst", "timesnet", "lstm", "bilstm"
   # SDO images only: "convlstm"
   # Multi-modal: "fusion", "baseline"
+  # GNN (pluggable temporal): "gnn" (see gnn_temporal_type)
   model_type: "transformer"
 
   # Shared dimension across modalities
@@ -342,14 +343,18 @@ model:
   tcn_dropout: 0.1
 
   # GNN (Graph Neural Network with pluggable temporal encoder)
-  gnn_temporal_type: "transformer"  # "transformer", "tcn", or "bilstm"
+  # gnn_temporal_type: "transformer" | "tcn" | "bilstm" | "lstm" |
+  #                    "patch_transformer" | "timesnet" | "linear"
+  gnn_temporal_type: "transformer"
   gnn_node_feature_dim: 32          # Feature dim per graph node
   gnn_gcn_hidden_dim: 64            # Hidden dim in GCN layers
   gnn_num_gcn_layers: 2             # Number of GCN layers
   gnn_dropout: 0.1                  # Dropout rate
   gnn_node_embed_dim: 16            # Node embedding dim for adaptive adjacency
+  gnn_linear_hidden_dim: 256        # Hidden dim for gnn_temporal_type="linear" (Flatten+MLP)
 
-  # BiLSTM (used as GNN temporal encoder when gnn_temporal_type="bilstm")
+  # LSTM / BiLSTM (standalone models and GNN temporal encoder)
+  # Used when model_type="lstm"/"bilstm" or gnn_temporal_type="lstm"/"bilstm"
   bilstm_hidden_size: 128
   bilstm_num_layers: 2
 
