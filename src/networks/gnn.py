@@ -11,6 +11,7 @@ from ._registry import register_model
 from .transformer import PositionalEncoding
 from .tcn import TemporalBlock
 from .patchtst import PatchEmbedding
+from .timesnet import TimesBlock
 
 
 class GraphConvLayer(nn.Module):
@@ -63,7 +64,8 @@ class GNNEncoder(nn.Module):
         node_feature_dim: Feature dimension per node after projection.
         gcn_hidden_dim: Hidden dimension in GCN layers.
         num_gcn_layers: Number of GCN layers.
-        temporal_type: Temporal encoder type ("transformer", "tcn", "bilstm").
+        temporal_type: Temporal encoder type ("transformer", "tcn", "bilstm",
+            "lstm", "patch_transformer", "timesnet", "linear").
         d_model: Output feature dimension.
         dropout: Dropout rate.
         node_embed_dim: Dimension of node embeddings for adaptive adjacency.
@@ -72,8 +74,13 @@ class GNNEncoder(nn.Module):
         transformer_dim_feedforward: Feedforward dimension.
         tcn_channels: Channel list for TCN temporal encoder.
         tcn_kernel_size: Kernel size for TCN.
-        bilstm_hidden_size: Hidden size for BiLSTM.
-        bilstm_num_layers: Number of BiLSTM layers.
+        bilstm_hidden_size: Hidden size for BiLSTM / LSTM.
+        bilstm_num_layers: Number of BiLSTM / LSTM layers.
+        timesnet_d_ff: Hidden dim in TimesNet Inception blocks.
+        timesnet_num_blocks: Number of stacked TimesBlocks.
+        timesnet_top_k: Number of dominant periods per TimesBlock.
+        timesnet_num_kernels: Number of Inception conv branches.
+        linear_hidden_dim: Hidden dim for the Flatten+MLP temporal reducer.
     """
 
     def __init__(
@@ -96,12 +103,19 @@ class GNNEncoder(nn.Module):
         # TCN temporal params
         tcn_channels: list = None,
         tcn_kernel_size: int = 3,
-        # BiLSTM temporal params
+        # BiLSTM / LSTM temporal params
         bilstm_hidden_size: int = 128,
         bilstm_num_layers: int = 2,
         # PatchTransformer temporal params
         patch_len: int = 16,
         patch_stride: int = 8,
+        # TimesNet temporal params
+        timesnet_d_ff: int = 128,
+        timesnet_num_blocks: int = 2,
+        timesnet_top_k: int = 3,
+        timesnet_num_kernels: int = 3,
+        # Linear (Flatten+MLP) temporal params
+        linear_hidden_dim: int = 256,
     ):
         super().__init__()
 
@@ -194,6 +208,51 @@ class GNNEncoder(nn.Module):
                 dropout=dropout if bilstm_num_layers > 1 else 0.0
             )
             self._bilstm_out_dim = bilstm_hidden_size * 2  # bidirectional
+        elif temporal_type == "lstm":
+            self.temporal_proj = nn.Linear(temporal_input_dim, bilstm_hidden_size)
+            self.temporal_encoder = nn.LSTM(
+                input_size=bilstm_hidden_size,
+                hidden_size=bilstm_hidden_size,
+                num_layers=bilstm_num_layers,
+                batch_first=True,
+                bidirectional=False,
+                dropout=dropout if bilstm_num_layers > 1 else 0.0
+            )
+            self._lstm_out_dim = bilstm_hidden_size  # unidirectional
+        elif temporal_type == "timesnet":
+            # FFT period detection requires top_k <= seq_len // 2
+            effective_top_k = min(timesnet_top_k, max(input_sequence_length // 2, 1))
+            self.temporal_proj = nn.Linear(temporal_input_dim, d_model)
+            self._timesnet_blocks = nn.ModuleList([
+                TimesBlock(
+                    seq_len=input_sequence_length,
+                    d_model=d_model,
+                    d_ff=timesnet_d_ff,
+                    top_k=effective_top_k,
+                    num_kernels=timesnet_num_kernels,
+                )
+                for _ in range(timesnet_num_blocks)
+            ])
+            self._timesnet_norms = nn.ModuleList([
+                nn.LayerNorm(d_model) for _ in range(timesnet_num_blocks)
+            ])
+            self._timesnet_dropouts = nn.ModuleList([
+                nn.Dropout(dropout) for _ in range(timesnet_num_blocks)
+            ])
+            self.temporal_encoder = None  # branch uses dedicated block list
+        elif temporal_type == "linear":
+            # Flatten+MLP temporal reducer: drops sequence structure
+            flat_dim = input_sequence_length * temporal_input_dim
+            self.temporal_proj = None  # unused in this branch
+            self.temporal_encoder = nn.Sequential(
+                nn.Flatten(),
+                nn.Linear(flat_dim, linear_hidden_dim),
+                nn.ReLU(inplace=True),
+                nn.Dropout(dropout),
+                nn.Linear(linear_hidden_dim, d_model),
+                nn.ReLU(inplace=True),
+                nn.Dropout(dropout),
+            )
         elif temporal_type == "patch_transformer":
             self.temporal_proj = nn.Linear(temporal_input_dim, d_model)
             self._patch_embed = PatchEmbedding(
@@ -225,12 +284,17 @@ class GNNEncoder(nn.Module):
         # Global pooling + output projection
         self.global_pool = nn.AdaptiveAvgPool1d(1)
 
-        if temporal_type in ("transformer", "patch_transformer"):
+        if temporal_type in ("transformer", "patch_transformer", "timesnet"):
             self.output_projection = nn.Linear(d_model, d_model)
         elif temporal_type == "tcn":
             self.output_projection = nn.Linear(self._tcn_out_dim, d_model)
         elif temporal_type == "bilstm":
             self.output_projection = nn.Linear(self._bilstm_out_dim, d_model)
+        elif temporal_type == "lstm":
+            self.output_projection = nn.Linear(self._lstm_out_dim, d_model)
+        elif temporal_type == "linear":
+            # Already produces d_model from the MLP; identity keeps API parity
+            self.output_projection = nn.Identity()
 
     def _compute_adaptive_adj(self) -> torch.Tensor:
         """Compute adaptive adjacency matrix from node embeddings."""
@@ -302,6 +366,21 @@ class GNNEncoder(nn.Module):
             h = self.temporal_proj(h)  # (batch, seq_len, hidden_size)
             h, _ = self.temporal_encoder(h)  # (batch, seq_len, hidden*2)
             h = h.transpose(1, 2)  # (batch, hidden*2, seq_len)
+        elif self.temporal_type == "lstm":
+            h = self.temporal_proj(h)  # (batch, seq_len, hidden_size)
+            h, _ = self.temporal_encoder(h)  # (batch, seq_len, hidden_size)
+            h = h.transpose(1, 2)  # (batch, hidden_size, seq_len)
+        elif self.temporal_type == "timesnet":
+            h = self.temporal_proj(h)  # (batch, seq_len, d_model)
+            for block, norm, drop in zip(
+                self._timesnet_blocks, self._timesnet_norms, self._timesnet_dropouts
+            ):
+                h = norm(drop(block(h)) + h)
+            h = h.transpose(1, 2)  # (batch, d_model, seq_len)
+        elif self.temporal_type == "linear":
+            # Skip temporal_proj/global_pool; MLP directly reduces to d_model
+            h = self.temporal_encoder(h)  # (batch, d_model)
+            return self.output_projection(h)
         elif self.temporal_type == "patch_transformer":
             h = self.temporal_proj(h)  # (batch, seq_len, d_model)
             tokens = self._patch_embed(h)  # (batch, num_patches, d_model)
@@ -338,7 +417,8 @@ class GNNOnlyModel(nn.Module):
         gnn_node_feature_dim: Feature dim per graph node.
         gnn_gcn_hidden_dim: Hidden dim in GCN layers.
         gnn_num_gcn_layers: Number of GCN layers.
-        gnn_temporal_type: Temporal encoder ("transformer", "tcn", "bilstm").
+        gnn_temporal_type: Temporal encoder ("transformer", "tcn", "bilstm",
+            "lstm", "patch_transformer", "timesnet", "linear").
         gnn_dropout: Dropout rate.
         gnn_node_embed_dim: Dim of node embeddings for adaptive adjacency.
         transformer_nhead: Attention heads (for transformer temporal).
@@ -346,8 +426,13 @@ class GNNOnlyModel(nn.Module):
         transformer_dim_feedforward: Feedforward dim.
         tcn_channels: Channel list for TCN temporal.
         tcn_kernel_size: Kernel size for TCN.
-        bilstm_hidden_size: Hidden size for BiLSTM.
-        bilstm_num_layers: Number of BiLSTM layers.
+        bilstm_hidden_size: Hidden size for BiLSTM / LSTM.
+        bilstm_num_layers: Number of BiLSTM / LSTM layers.
+        timesnet_d_ff: Hidden dim in TimesBlock Inception blocks.
+        timesnet_num_blocks: Number of stacked TimesBlocks.
+        timesnet_top_k: Number of dominant periods per TimesBlock.
+        timesnet_num_kernels: Number of Inception conv branches.
+        linear_hidden_dim: Hidden dim for the Flatten+MLP temporal reducer.
     """
 
     def __init__(
@@ -375,6 +460,11 @@ class GNNOnlyModel(nn.Module):
         bilstm_num_layers: int = 2,
         patch_len: int = 16,
         patch_stride: int = 8,
+        timesnet_d_ff: int = 128,
+        timesnet_num_blocks: int = 2,
+        timesnet_top_k: int = 3,
+        timesnet_num_kernels: int = 3,
+        linear_hidden_dim: int = 256,
     ):
         super().__init__()
 
@@ -405,6 +495,11 @@ class GNNOnlyModel(nn.Module):
             bilstm_num_layers=bilstm_num_layers,
             patch_len=patch_len,
             patch_stride=patch_stride,
+            timesnet_d_ff=timesnet_d_ff,
+            timesnet_num_blocks=timesnet_num_blocks,
+            timesnet_top_k=timesnet_top_k,
+            timesnet_num_kernels=timesnet_num_kernels,
+            linear_hidden_dim=linear_hidden_dim,
         )
 
         # Regression head (identical to Transformer/TCN models)
@@ -479,6 +574,11 @@ def _create_gnn(config):
     bilstm_num_layers = getattr(config.model, 'bilstm_num_layers', 2)
     patch_len = getattr(config.model, 'patch_len', 16)
     patch_stride = getattr(config.model, 'patch_stride', 8)
+    timesnet_d_ff = getattr(config.model, 'timesnet_d_ff', 128)
+    timesnet_num_blocks = getattr(config.model, 'timesnet_num_blocks', 2)
+    timesnet_top_k = getattr(config.model, 'timesnet_top_k', 3)
+    timesnet_num_kernels = getattr(config.model, 'timesnet_num_kernels', 3)
+    linear_hidden_dim = getattr(config.model, 'gnn_linear_hidden_dim', 256)
 
     model = GNNOnlyModel(
         num_input_variables=num_input_variables,
@@ -503,6 +603,11 @@ def _create_gnn(config):
         bilstm_num_layers=bilstm_num_layers,
         patch_len=patch_len,
         patch_stride=patch_stride,
+        timesnet_d_ff=timesnet_d_ff,
+        timesnet_num_blocks=timesnet_num_blocks,
+        timesnet_top_k=timesnet_top_k,
+        timesnet_num_kernels=timesnet_num_kernels,
+        linear_hidden_dim=linear_hidden_dim,
     )
     print(f"  GNN temporal encoder: {gnn_temporal_type}")
     print(f"  GNN: {gnn_num_gcn_layers} GCN layers, {gnn_num_nodes} nodes, "
