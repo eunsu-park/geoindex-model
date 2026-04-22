@@ -5,7 +5,7 @@ Use create_model(config) to instantiate models by config.
 """
 
 # Import all submodules to trigger @register_model decorators
-from . import convlstm, transformer, tcn, linear, fusion, baseline, gnn, timesnet, patchtst
+from . import convlstm, transformer, tcn, linear, fusion, baseline, gnn, timesnet, patchtst, lstm
 
 # Registry
 from ._registry import create_model, list_models
@@ -23,6 +23,7 @@ from .baseline import Conv3DEncoder, BaselineModel
 from .gnn import GraphConvLayer, GNNEncoder, GNNOnlyModel
 from .timesnet import InceptionBlock, TimesBlock, TimesNetEncoder, TimesNetOnlyModel
 from .patchtst import PatchEmbedding, PatchTransformerEncoder, PatchTSTOnlyModel
+from .lstm import LSTMEncoder, LSTMOnlyModel
 
 
 # verify_model function
