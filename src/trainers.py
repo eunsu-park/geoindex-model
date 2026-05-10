@@ -570,7 +570,8 @@ class Trainer:
                 ts_features, img_features, dim=1
             ).mean().item()
         elif self.model_type in ("transformer", "linear", "tcn", "convlstm",
-                                   "gnn", "timesnet", "patchtst"):
+                                   "gnn", "timesnet", "patchtst",
+                                   "lstm", "bilstm"):
             outputs = self.model(inputs, sdo, return_features=False)
             cont_loss = torch.tensor(0.0, device=self.device)
             cosine_sim = 0.0
@@ -669,7 +670,8 @@ class Trainer:
                 ts_features, img_features, dim=1
             ).mean().item()
         elif self.model_type in ("transformer", "linear", "tcn", "convlstm",
-                                   "gnn", "timesnet", "patchtst"):
+                                   "gnn", "timesnet", "patchtst",
+                                   "lstm", "bilstm"):
             outputs = self.model(inputs, sdo, return_features=False)
             cont_loss = torch.tensor(0.0, device=self.device)
             cosine_sim = 0.0
