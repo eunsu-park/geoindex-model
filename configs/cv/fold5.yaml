@@ -1,0 +1,7 @@
+# @package _global_
+# CV Fold 5: train 1995..2021-12-30 (24h embargo), val 2022-01-01..2025-12-31
+data:
+  timeseries:
+    train_index: "cv5/fold5/train_index.csv"
+    validation_index: "cv5/fold5/validation_index.csv"
+    stat_file: "cv5/fold5/table_stats.pkl"
