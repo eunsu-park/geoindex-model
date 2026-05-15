@@ -45,7 +45,7 @@ experiment:
   batch_size: 128
 
 training:
-  epochs: 30
+  epochs: 100
   model_save_freq: 5
   report_freq: 200
 
