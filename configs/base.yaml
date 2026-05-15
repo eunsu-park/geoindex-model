@@ -105,6 +105,9 @@ data:
     train_index: "train_index.csv"
     validation_index: "validation_index.csv"
     test_index: "test_index.csv"
+    # Stats cache filename, resolved under data_root.  Override per CV fold
+    # so each fold computes normalization stats from its own training period.
+    stat_file: "table_stats.pkl"
 
     # --- Timestep-based window offsets relative to T=0 ---
     # T=0 is at row (days_before * points_per_day) in CSV files.

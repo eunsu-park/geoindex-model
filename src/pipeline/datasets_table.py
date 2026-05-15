@@ -78,7 +78,10 @@ class TableBaseDataset(Dataset):
         self.validation_index = self._load_index(val_index_path)
 
         # Statistics (from training portion of the table)
-        stat_path = os.path.join(self.data_root, "table_stats.pkl")
+        # Per-fold CV runs must override stat_file to avoid leaking stats
+        # from a different training period across folds.
+        stat_filename = getattr(ts_cfg, "stat_file", "table_stats.pkl")
+        stat_path = os.path.join(self.data_root, stat_filename)
         train_rows = [self.dt_to_row[dt] for dt, _ in self.train_index]
         self.stat_dict = compute_statistics_table(
             stat_file_path=stat_path,
