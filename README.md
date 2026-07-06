@@ -1,16 +1,16 @@
-# Solar Wind Prediction - ap30 Regression
-# 태양풍 기반 ap30 지자기 지수 예측
+# Solar Wind Prediction - Geomagnetic Index Regression
+# 태양풍 기반 지자기 지수 예측
 
-Deep learning system for predicting the ap30 geomagnetic index using solar wind time series data. Supports 9 model architectures including GNN, PatchTST, and TimesNet.
+Deep learning system for predicting a geomagnetic index from solar wind time series data. The target index is a Hydra config choice (index-agnostic); ap30 is the default example, and hp30 is also defined. Supports 14 model architectures including GNN, PatchTST, and TimesNet.
 
-태양풍 시계열 데이터를 이용한 ap30 지자기 지수 딥러닝 예측 시스템. GNN, PatchTST, TimesNet 등 9가지 모델 아키텍처를 지원합니다.
+태양풍 시계열 데이터로 지자기 지수를 예측하는 딥러닝 시스템. 예측 대상 지수는 Hydra 설정으로 선택하며(지수 무관), ap30이 기본 예시이고 hp30도 정의되어 있습니다. GNN, PatchTST, TimesNet 등 14가지 모델 아키텍처를 지원합니다.
 
 ---
 
 ## Features / 주요 기능
 
 - **Modular data pipeline / 모듈형 데이터 파이프라인**: CSV time series (active), HDF5 multi-modal (SDO+OMNI, future)
-- **9 model architectures / 9가지 모델**: Linear, Transformer, TCN, PatchTST, TimesNet, GNN×4
+- **14 model architectures / 14가지 모델**: Linear, LSTM, BiLSTM, Transformer, TCN, PatchTST, TimesNet, GNN×7
 - **SolarWindWeightedLoss**: NOAA G-Scale based weighted loss for geomagnetic storms / NOAA G-Scale 기반 지자기 폭풍 가중 손실함수
 - **Hydra configuration / Hydra 설정**: Easy experiment management with config inheritance / 설정 상속으로 손쉬운 실험 관리
 - **GNN with dynamic node groups / GNN 동적 노드 그룹**: Config-based variable grouping with validation / 설정 기반 변수 그룹화 및 검증
@@ -21,16 +21,16 @@ Deep learning system for predicting the ap30 geomagnetic index using solar wind 
 
 ```bash
 # Using ap CLI (recommended) / ap CLI 사용 (권장)
-../ap train --profile standard           # GNN+Transformer, 2-day input, 12h output
-../ap train --profile quick              # Linear baseline, fast (~2 min)
-../ap validate --profile standard --epoch best
-../ap analyze attention --profile standard
+../geoindex/ap train --profile standard           # GNN+Transformer, 2-day input, 12h output
+../geoindex/ap train --profile quick              # Linear baseline, fast (~2 min)
+../geoindex/ap validate --profile standard --epoch best
+../geoindex/ap analyze attention --profile standard
 
 # Using Hydra config groups directly / Hydra 설정 그룹 직접 사용
 python scripts/train.py --config-name=local +io=in2d_out12h +model=gnn_transformer
 python scripts/train.py --config-name=local +io=in1d_out6h +model=linear
 
-# Train all 81 experiments / 81개 전체 실험 훈련
+# Train all 336 experiments / 336개 전체 실험 훈련
 ./train.sh
 
 # Train specific subset / 특정 부분만 훈련
@@ -48,13 +48,13 @@ python scripts/train.py --config-name=local +io=in1d_out6h +model=linear
 ## Project Structure / 프로젝트 구조
 
 ```
-regression-sw/
+geoindex-model/
 ├── configs/                # Hydra configuration files / Hydra 설정 파일
 │   ├── base.yaml           # Shared defaults / 공유 기본 설정
 │   ├── local.yaml          # Environment settings / 환경 설정
-│   ├── io/                 # I/O window configs (9) / 입출력 윈도우 설정
-│   │   ├── in1d_out6h.yaml ... in3d_out24h.yaml
-│   ├── model/              # Model configs (9) / 모델 설정
+│   ├── io/                 # I/O window configs (24) / 입출력 윈도우 설정
+│   │   ├── in6h_out6h.yaml ... in3d_out24h.yaml
+│   ├── model/              # Model configs (14) / 모델 설정
 │   │   ├── linear.yaml, transformer.yaml, gnn_transformer.yaml ...
 │   └── experiments/        # Experiment overrides / 실험 오버라이드
 ├── src/                    # Core modules / 핵심 모듈
@@ -76,49 +76,62 @@ regression-sw/
 └── validation.sh           # Parallel validation runner / 병렬 검증 실행기
 ```
 
-Documentation lives in the monorepo-level `docs/` at the project root
-(`../docs/regression-sw/`), not inside this subproject.
-문서는 모노레포 루트의 `../docs/regression-sw/` 아래에 있다.
+Documentation lives in the sibling hub repo under
+`../geoindex/docs/geoindex-model/`, not inside this repo.
+문서는 형제 허브 저장소의 `../geoindex/docs/geoindex-model/` 아래에 있다.
 
 ---
 
 ## Data / 데이터
 
-Current dataset: CSV-based 30-min solar wind time series from `setup-sw-db`.
-현재 데이터셋: `setup-sw-db`에서 생성된 CSV 기반 30분 간격 태양풍 시계열.
+Current dataset: CSV-based 30-min solar wind time series from `geoindex-data`.
+현재 데이터셋: `geoindex-data`에서 생성된 CSV 기반 30분 간격 태양풍 시계열.
 
-See / 상세: [dataset-guide.md](../docs/regression-sw/dataset-guide.md)
+See / 상세: [dataset-guide.md](../geoindex/docs/geoindex-model/dataset-guide.md)
 
 - **22 input variables / 22개 입력 변수**: solar wind (v, np, t, bx, by, bz, bt) × (avg/min/max) + ap30
-- **Target / 타겟**: ap30 (30-min equivalent amplitude geomagnetic index / 30분 등가진폭 지자기 지수)
+- **Target / 타겟**: configurable geomagnetic index (Hydra config choice) — ap30 by default (30-min equivalent amplitude geomagnetic index); hp30 also defined / 설정 가능한 지자기 지수(Hydra 설정 선택) — 기본값 ap30(30분 등가진폭 지자기 지수), hp30도 정의됨
 - **Output windows / 출력 윈도우**: 6h (12 timesteps), 12h (24 timesteps), 24h (48 timesteps)
 
 ---
 
-## Models / 모델 (9종)
+## Models / 모델 (14종)
 
-See / 상세: [model-guide.md](../docs/regression-sw/model-guide.md)
+See / 상세: [model-guide.md](../geoindex/docs/geoindex-model/model-guide.md)
 
-| # | Config Suffix | Type | Description / 설명 |
-|---|--------------|------|-------------------|
-| 1 | (none) | `linear` | MLP baseline / MLP 기준선 |
-| 2 | `_transformer` | `transformer` | Transformer encoder |
-| 3 | `_tcn` | `tcn` | Temporal Convolutional Network |
-| 4 | `_patchtst` | `patchtst` | Patch-based Transformer (ICLR 2023) |
-| 5 | `_timesnet` | `timesnet` | FFT + 2D Inception Conv (ICLR 2023) |
-| 6 | `_gnn_transformer` | `gnn` | GNN (8-node graph) + Transformer |
-| 7 | `_gnn_tcn` | `gnn` | GNN + TCN |
-| 8 | `_gnn_bilstm` | `gnn` | GNN + BiLSTM |
-| 9 | `_gnn_patchtst` | `gnn` | GNN + PatchTransformer |
+| # | `+model=` | Type | Description / 설명 |
+|---|-----------|------|-------------------|
+| 1 | `linear` | `linear` | MLP baseline / MLP 기준선 |
+| 2 | `lstm` | `lstm` | LSTM recurrent encoder |
+| 3 | `bilstm` | `bilstm` | Bidirectional LSTM |
+| 4 | `transformer` | `transformer` | Transformer encoder |
+| 5 | `tcn` | `tcn` | Temporal Convolutional Network |
+| 6 | `patchtst` | `patchtst` | Patch-based Transformer (ICLR 2023) |
+| 7 | `timesnet` | `timesnet` | FFT + 2D Inception Conv (ICLR 2023) |
+| 8 | `gnn_linear` | `gnn` | GNN + Linear |
+| 9 | `gnn_lstm` | `gnn` | GNN + LSTM |
+| 10 | `gnn_bilstm` | `gnn` | GNN + BiLSTM |
+| 11 | `gnn_transformer` | `gnn` | GNN + Transformer |
+| 12 | `gnn_tcn` | `gnn` | GNN + TCN |
+| 13 | `gnn_patchtst` | `gnn` | GNN + PatchTST |
+| 14 | `gnn_timesnet` | `gnn` | GNN + TimesNet |
+
+GNN variants build a graph over config-driven node groups (variable node count; 8 groups is the default grouping).
+GNN 계열은 설정 기반 노드 그룹(가변 노드 수, 기본 8개 그룹)으로 그래프를 구성합니다.
 
 ---
 
 ## Experiment Matrix / 실험 매트릭스
 
-81 experiments = 9 models × 3 inputs (1d/2d/3d) × 3 outputs (6h/12h/24h)
-81개 실험 = 9모델 × 3입력 × 3출력
+`train.sh` cross-products every `configs/io/*.yaml` with every `configs/model/*.yaml`:
+336 experiments = 24 I/O windows × 14 models.
+`train.sh`는 모든 `configs/io/*.yaml`와 모든 `configs/model/*.yaml`를 교차 조합합니다:
+336개 실험 = 24 입출력 윈도우 × 14 모델.
 
-See / 상세: [experiments.md](../docs/regression-sw/experiments.md)
+I/O windows = 6 inputs (6h/12h/18h/1d/2d/3d) × 4 outputs (6h/12h/18h/24h).
+입출력 윈도우 = 6 입력(6h/12h/18h/1d/2d/3d) × 4 출력(6h/12h/18h/24h).
+
+See / 상세: [experiments.md](../geoindex/docs/geoindex-model/experiments.md)
 
 ---
 
@@ -137,23 +150,32 @@ python scripts/train.py --config-name=local +io=in1d_out6h +model=linear
 python scripts/train.py --config-name=local +io=in3d_out24h +model=gnn_patchtst
 ```
 
+Sample I/O windows (3 of 24; full list in `configs/io/`) / 예시 입출력 윈도우 (24개 중 3개; 전체는 `configs/io/`):
+
 | I/O Window | Input | Output | `+io=` |
 |------------|-------|--------|--------|
 | 1 day → 6h | 48 steps | 12 steps | `in1d_out6h` |
 | 2 days → 12h | 96 steps | 24 steps | `in2d_out12h` |
 | 3 days → 24h | 144 steps | 48 steps | `in3d_out24h` |
 
+All 14 models (full list in `configs/model/`) / 전체 14개 모델 (전체는 `configs/model/`):
+
 | Model | `+model=` |
 |-------|-----------|
 | Linear | `linear` |
+| LSTM | `lstm` |
+| BiLSTM | `bilstm` |
 | Transformer | `transformer` |
 | TCN | `tcn` |
 | PatchTST | `patchtst` |
 | TimesNet | `timesnet` |
+| GNN+Linear | `gnn_linear` |
+| GNN+LSTM | `gnn_lstm` |
+| GNN+BiLSTM | `gnn_bilstm` |
 | GNN+Transformer | `gnn_transformer` |
 | GNN+TCN | `gnn_tcn` |
-| GNN+BiLSTM | `gnn_bilstm` |
 | GNN+PatchTST | `gnn_patchtst` |
+| GNN+TimesNet | `gnn_timesnet` |
 
 ---
 
@@ -162,7 +184,7 @@ python scripts/train.py --config-name=local +io=in3d_out24h +model=gnn_patchtst
 Post-training analysis tools for model interpretability and evaluation.
 훈련 후 모델 해석 및 평가를 위한 분석 도구.
 
-See / 상세: [analysis.md](../docs/regression-sw/analysis.md)
+See / 상세: [analysis.md](../geoindex/docs/geoindex-model/analysis.md)
 
 ### Primary Analysis (require checkpoint + data) / 주요 분석 (체크포인트 + 데이터 필요)
 
