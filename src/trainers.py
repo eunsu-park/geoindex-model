@@ -362,8 +362,8 @@ class Trainer:
 
         # =====================================================================
         # LR Warmup Settings
-        # Meaning: 초기 학습률을 낮게 시작하여 점진적으로 증가
-        #          → 학습 초기 불안정성 해소, 더 나은 수렴
+        # Meaning: Start with a low learning rate and increase it gradually
+        #          → Reduces early-training instability, better convergence
         # =====================================================================
         lr_warmup_cfg = getattr(config.training, 'lr_warmup', None)
         if lr_warmup_cfg and getattr(lr_warmup_cfg, 'enable', False):
@@ -376,8 +376,8 @@ class Trainer:
 
         # =====================================================================
         # Gradient Accumulation Settings
-        # Meaning: 여러 미니배치의 gradient 누적 후 한 번에 업데이트
-        #          → 효과적 배치 크기 증가, 학습 안정성 향상
+        # Meaning: Accumulate gradients over several mini-batches, then update once
+        #          → Increases effective batch size, improves training stability
         # =====================================================================
         self.gradient_accumulation_steps = getattr(
             config.training, 'gradient_accumulation_steps', 1
@@ -386,9 +386,9 @@ class Trainer:
 
         # =====================================================================
         # Scheduler Type Setting
-        # Meaning: 스케줄러 종류에 따라 step() 호출 방식이 다름
-        #          - reduce_on_plateau: step(loss) - loss 기반
-        #          - cosine_annealing: step(epoch) - epoch 기반
+        # Meaning: The way step() is called depends on the scheduler type
+        #          - reduce_on_plateau: step(loss) - loss based
+        #          - cosine_annealing: step(epoch) - epoch based
         # =====================================================================
         self.scheduler_type = getattr(
             config.training, 'scheduler_type', 'reduce_on_plateau'
@@ -432,9 +432,9 @@ class Trainer:
     def _apply_lr_warmup(self, epoch: int) -> None:
         """Apply learning rate warmup.
 
-        Meaning: 학습 초기에 낮은 LR로 시작하여 안정적으로 증가
-                 → 초기 gradient가 큰 경우에도 안정적 학습 가능
-                 → best epoch = 1 문제 해결에 기여
+        Meaning: Start with a low LR early in training and increase it steadily
+                 → Enables stable training even when initial gradients are large
+                 → Helps resolve the "best epoch = 1" problem
 
         Args:
             epoch: Current epoch (1-indexed).
@@ -527,10 +527,10 @@ class Trainer:
         """Perform a single training step with optional gradient accumulation.
 
         Gradient Accumulation:
-        - 여러 미니배치의 gradient를 누적한 후 한 번에 업데이트
-        - 효과적 배치 크기 = batch_size × gradient_accumulation_steps
-        - 메모리 제한을 우회하면서 큰 배치 효과 달성
-        - 학습 안정성 향상, gradient 추정 분산 감소
+        - Accumulate gradients over several mini-batches, then update once
+        - Effective batch size = batch_size × gradient_accumulation_steps
+        - Achieves large-batch behavior while working around memory limits
+        - Improves training stability, reduces gradient estimate variance
 
         Args:
             data_dict: Dictionary containing input data.
@@ -546,7 +546,7 @@ class Trainer:
         targets = data_dict["targets"].to(self.device)
 
         # Zero gradients only at the start of accumulation cycle
-        # (첫 번째 미니배치에서만 gradient 초기화)
+        # (reset gradients only on the first mini-batch)
         if self.accumulation_counter == 0:
             self.optimizer.zero_grad()
 
@@ -591,8 +591,8 @@ class Trainer:
             total_loss = cont_loss
 
         # Backward pass with gradient accumulation
-        # Loss를 accumulation steps로 나누어 gradient scale 조정
-        # (최종 gradient = 평균 gradient가 되도록)
+        # Divide loss by accumulation steps to scale the gradient
+        # (so the final gradient equals the average gradient)
         scaled_loss = total_loss / self.gradient_accumulation_steps
         scaled_loss.backward()
 
@@ -600,9 +600,9 @@ class Trainer:
         self.accumulation_counter += 1
 
         # Optimizer step only after accumulating all gradients
-        # (누적 완료 시에만 파라미터 업데이트)
+        # (update parameters only once accumulation is complete)
         if self.accumulation_counter >= self.gradient_accumulation_steps:
-            # Gradient clipping (누적된 전체 gradient에 적용)
+            # Gradient clipping (applied to the full accumulated gradient)
             torch.nn.utils.clip_grad_norm_(
                 self.model.parameters(),
                 max_norm=self.config.training.gradient_clip_max_norm
@@ -766,7 +766,8 @@ class Trainer:
                 continue
 
         # Handle remaining accumulated gradients at epoch end
-        # (에포크 끝에서 남은 누적 gradient 처리 - 배치 수가 accumulation_steps로 나누어 떨어지지 않는 경우)
+        # (process leftover accumulated gradients when the batch count is not
+        #  divisible by accumulation_steps)
         if self.accumulation_counter > 0:
             torch.nn.utils.clip_grad_norm_(
                 self.model.parameters(),

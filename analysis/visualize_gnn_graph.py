@@ -1,5 +1,4 @@
 """GNN learned adjacency matrix visualization.
-GNN 학습된 인접 행렬 시각화.
 
 Extracts and visualizes the adaptive adjacency matrix from GNN
 checkpoints without requiring full model/config reconstruction.
@@ -26,9 +25,9 @@ NODE_LABELS = ['V', 'Np', 'T', 'Bx', 'By', 'Bz', 'Bt', 'ap30']
 
 # Physical expectations for validation
 EXPECTED_STRONG_EDGES = {
-    ('Bz', 'ap30'): 'Southward IMF drives storms / 남향 IMF가 폭풍 유발',
-    ('V', 'ap30'):   'High-speed solar wind / 고속 태양풍',
-    ('Bt', 'ap30'):  'IMF magnitude / IMF 크기',
+    ('Bz', 'ap30'): 'Southward IMF drives storms',
+    ('V', 'ap30'):   'High-speed solar wind',
+    ('Bt', 'ap30'):  'IMF magnitude',
 }
 
 
@@ -78,9 +77,9 @@ def plot_single_heatmap(adj, title, save_path):
                     fontsize=8, color=color)
 
     ax.set_title(title, fontsize=12)
-    ax.set_xlabel('Target Node / 대상 노드')
-    ax.set_ylabel('Source Node / 출발 노드')
-    plt.colorbar(im, ax=ax, label='Edge Weight / 엣지 가중치')
+    ax.set_xlabel('Target Node')
+    ax.set_ylabel('Source Node')
+    plt.colorbar(im, ax=ax, label='Edge Weight')
     plt.tight_layout()
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.close()
@@ -112,7 +111,7 @@ def plot_comparison(adjs, configs, save_path):
         out = cfg.split('_')[1] if '_' in cfg else cfg
         ax.set_title(out, fontsize=11)
 
-    fig.suptitle('GNN Learned Adjacency / GNN 학습된 인접 행렬', fontsize=13)
+    fig.suptitle('GNN Learned Adjacency', fontsize=13)
     plt.tight_layout()
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.close()
@@ -120,8 +119,7 @@ def plot_comparison(adjs, configs, save_path):
 
 def validate_physics(adj, config_name):
     """Check if learned graph matches physical expectations."""
-    lines = [f"\n=== Physical Validation: {config_name} ===",
-             f"    물리적 검증: {config_name}\n"]
+    lines = [f"\n=== Physical Validation: {config_name} ===\n"]
 
     for (src_name, tgt_name), desc in EXPECTED_STRONG_EDGES.items():
         src_idx = NODE_LABELS.index(src_name)
@@ -135,7 +133,7 @@ def validate_physics(adj, config_name):
                      f"({desc})")
 
     # Top 5 strongest edges overall
-    lines.append(f"\n  Top 5 strongest edges / 상위 5 엣지:")
+    lines.append(f"\n  Top 5 strongest edges:")
     flat = [(adj[i, j], NODE_LABELS[i], NODE_LABELS[j])
             for i in range(len(NODE_LABELS))
             for j in range(len(NODE_LABELS)) if i != j]

@@ -184,24 +184,24 @@ class AblationAnalyzer:
 
         print("\n[Interpretation]")
         if omni_drop > sdo_drop * 2:
-            print("  ⚠️  OMNI 기여도가 SDO보다 훨씬 높음")
-            print(f"     OMNI 제거 시 MAE 증가: {omni_drop:+.1f}%")
-            print(f"     SDO 제거 시 MAE 증가: {sdo_drop:+.1f}%")
+            print("  ⚠️  OMNI contribution is much higher than SDO")
+            print(f"     MAE increase when removing OMNI: {omni_drop:+.1f}%")
+            print(f"     MAE increase when removing SDO: {sdo_drop:+.1f}%")
         elif sdo_drop > omni_drop * 2:
-            print("  ✓ SDO 기여도가 OMNI보다 높음")
-            print(f"     SDO 제거 시 MAE 증가: {sdo_drop:+.1f}%")
-            print(f"     OMNI 제거 시 MAE 증가: {omni_drop:+.1f}%")
+            print("  ✓ SDO contribution is higher than OMNI")
+            print(f"     MAE increase when removing SDO: {sdo_drop:+.1f}%")
+            print(f"     MAE increase when removing OMNI: {omni_drop:+.1f}%")
         else:
-            print("  ✓ SDO와 OMNI 기여도가 유사함")
-            print(f"     OMNI 제거 시: {omni_drop:+.1f}%")
-            print(f"     SDO 제거 시: {sdo_drop:+.1f}%")
+            print("  ✓ SDO and OMNI contributions are similar")
+            print(f"     When removing OMNI: {omni_drop:+.1f}%")
+            print(f"     When removing SDO: {sdo_drop:+.1f}%")
 
         # Single modality comparison
         print("\n[Single Modality Comparison]")
         if sdo_mae < omni_mae:
-            print(f"  SDO only 성능이 더 좋음 (MAE: {sdo_mae:.4f} vs {omni_mae:.4f})")
+            print(f"  SDO only performs better (MAE: {sdo_mae:.4f} vs {omni_mae:.4f})")
         else:
-            print(f"  OMNI only 성능이 더 좋음 (MAE: {omni_mae:.4f} vs {sdo_mae:.4f})")
+            print(f"  OMNI only performs better (MAE: {omni_mae:.4f} vs {sdo_mae:.4f})")
 
         print("="*70)
 

@@ -59,10 +59,10 @@ def create_scheduler(config, optimizer):
 
     Supports multiple scheduler types:
     - "reduce_on_plateau": ReduceLROnPlateau (default)
-      → validation loss가 정체되면 LR 감소
+      → Reduces LR when validation loss plateaus
     - "cosine_annealing": CosineAnnealingWarmRestarts
-      → 주기적으로 LR을 cosine 형태로 감소 후 재시작
-      → 더 나은 local minima 탐색, 오버피팅 방지
+      → Periodically decays LR following a cosine curve, then restarts
+      → Better local minima search, prevents overfitting
 
     Args:
         config: Configuration object.
@@ -74,8 +74,8 @@ def create_scheduler(config, optimizer):
     scheduler_type = getattr(config.training, 'scheduler_type', 'reduce_on_plateau')
 
     if scheduler_type == "cosine_annealing":
-        # CosineAnnealingWarmRestarts: 주기적으로 LR 재시작
-        # → 학습 후반부에도 높은 LR로 새로운 minima 탐색 가능
+        # CosineAnnealingWarmRestarts: periodically restarts LR
+        # → Allows exploring new minima with high LR even late in training
         cosine_cfg = getattr(config.training, 'cosine_annealing', None)
         T_0 = cosine_cfg.T_0 if cosine_cfg else 10
         T_mult = cosine_cfg.T_mult if cosine_cfg else 2
@@ -89,7 +89,7 @@ def create_scheduler(config, optimizer):
             eta_min=eta_min
         )
     else:
-        # ReduceLROnPlateau (default): loss 정체 시 LR 감소
+        # ReduceLROnPlateau (default): reduces LR when loss plateaus
         logger.info(f"Scheduler: ReduceLROnPlateau (factor={config.training.scheduler_factor})")
         return optim.lr_scheduler.ReduceLROnPlateau(
             optimizer,

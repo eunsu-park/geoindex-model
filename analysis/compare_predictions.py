@@ -1,5 +1,4 @@
 """Multi-model prediction comparison plots.
-다중 모델 예측 비교 플롯.
 
 Overlays predictions from multiple models on the same event,
 highlighting storm events and quiet periods.

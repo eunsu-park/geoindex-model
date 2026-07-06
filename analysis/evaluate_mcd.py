@@ -1,5 +1,4 @@
 """Monte Carlo Dropout uncertainty analysis.
-MCD 불확실성 분석.
 
 Evaluates prediction uncertainty: 95% CI coverage, storm-period
 coverage, std vs target correlation, and calibration diagrams.
@@ -85,16 +84,16 @@ def plot_calibration(calibrations, labels, save_path):
     """Plot calibration diagram for multiple models."""
     fig, ax = plt.subplots(figsize=(7, 7))
 
-    ax.plot([0, 1], [0, 1], 'k--', alpha=0.5, label='Perfect / 완벽한 보정')
+    ax.plot([0, 1], [0, 1], 'k--', alpha=0.5, label='Perfect calibration')
 
     for cal, label in zip(calibrations, labels):
         expected = [c[0] for c in cal]
         actual = [c[1] for c in cal]
         ax.plot(expected, actual, 'o-', markersize=5, label=label)
 
-    ax.set_xlabel('Expected Coverage / 기대 커버리지')
-    ax.set_ylabel('Actual Coverage / 실제 커버리지')
-    ax.set_title('MCD Calibration Diagram / MCD 보정 다이어그램')
+    ax.set_xlabel('Expected Coverage')
+    ax.set_ylabel('Actual Coverage')
+    ax.set_title('MCD Calibration Diagram')
     ax.legend(fontsize=7)
     ax.grid(True, alpha=0.3)
     ax.set_xlim(0.4, 1.02)
@@ -121,7 +120,7 @@ def plot_std_vs_target(stds, targets, label, save_path):
             bin_means_s.append(stds[mask].mean())
 
     ax.plot(bin_means_t, bin_means_s, 'ro-', markersize=4,
-            linewidth=2, label='Bin average / 구간 평균')
+            linewidth=2, label='Bin average')
 
     r, p = scipy_stats.pearsonr(targets, stds)
     ax.text(0.02, 0.98, f'r = {r:.3f} (p = {p:.1e})',
@@ -130,8 +129,8 @@ def plot_std_vs_target(stds, targets, label, save_path):
             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
 
     ax.set_xlabel('Target ap30')
-    ax.set_ylabel('Prediction Std / 예측 표준편차')
-    ax.set_title(f'Uncertainty vs Target — {label}\n불확실성 vs 타겟')
+    ax.set_ylabel('Prediction Std')
+    ax.set_title(f'Uncertainty vs Target — {label}')
     ax.legend()
     ax.grid(True, alpha=0.3)
     plt.tight_layout()

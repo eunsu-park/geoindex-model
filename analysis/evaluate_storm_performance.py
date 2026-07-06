@@ -1,5 +1,4 @@
 """Storm-period filtered performance evaluation.
-폭풍 구간 필터링 성능 평가.
 
 Computes MAE, RMSE, and bias for each NOAA G-Scale tier
 from denormalized validation predictions.
