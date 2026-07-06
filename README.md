@@ -1,8 +1,6 @@
-# Solar Wind Prediction - Geomagnetic Index Regression
+# geoindex-model
 
 Deep learning system for predicting a geomagnetic index from solar wind time series data. The target index is a Hydra config choice (index-agnostic); ap30 is the default example, and hp30 is also defined. Supports 14 model architectures including GNN, PatchTST, and TimesNet.
-
----
 
 ## Features
 
@@ -11,8 +9,6 @@ Deep learning system for predicting a geomagnetic index from solar wind time ser
 - **SolarWindWeightedLoss**: NOAA G-Scale based weighted loss for geomagnetic storms
 - **Hydra configuration**: Easy experiment management with config inheritance
 - **GNN with dynamic node groups**: Config-based variable grouping with validation
-
----
 
 ## Quick Start
 
@@ -39,8 +35,6 @@ python scripts/train.py --config-name=local +io=in1d_out6h +model=linear
 # Validate all
 ./validation.sh --epoch best
 ```
-
----
 
 ## Project Structure
 
@@ -76,8 +70,6 @@ geoindex-model/
 Documentation lives in the sibling hub repo under
 `../geoindex/docs/geoindex-model/`, not inside this repo.
 
----
-
 ## Data
 
 Current dataset: CSV-based 30-min solar wind time series from `geoindex-data`.
@@ -87,8 +79,6 @@ See: [dataset-guide.md](../geoindex/docs/geoindex-model/dataset-guide.md)
 - **22 input variables**: solar wind (v, np, t, bx, by, bz, bt) × (avg/min/max) + ap30
 - **Target**: configurable geomagnetic index (Hydra config choice) — ap30 by default (30-min equivalent amplitude geomagnetic index); hp30 also defined
 - **Output windows**: 6h (12 timesteps), 12h (24 timesteps), 24h (48 timesteps)
-
----
 
 ## Models (14)
 
@@ -113,8 +103,6 @@ See: [model-guide.md](../geoindex/docs/geoindex-model/model-guide.md)
 
 GNN variants build a graph over config-driven node groups (variable node count; 8 groups is the default grouping).
 
----
-
 ## Experiment Matrix
 
 `train.sh` cross-products every `configs/io/*.yaml` with every `configs/model/*.yaml`:
@@ -123,8 +111,6 @@ GNN variants build a graph over config-driven node groups (variable node count; 
 I/O windows = 6 inputs (6h/12h/18h/1d/2d/3d) × 4 outputs (6h/12h/18h/24h).
 
 See: [experiments.md](../geoindex/docs/geoindex-model/experiments.md)
-
----
 
 ## Config System
 
@@ -167,8 +153,6 @@ All 14 models (full list in `configs/model/`):
 | GNN+PatchTST | `gnn_patchtst` |
 | GNN+TimesNet | `gnn_timesnet` |
 
----
-
 ## Analysis
 
 Post-training analysis tools for model interpretability and evaluation.
@@ -192,8 +176,6 @@ See: [analysis.md](../geoindex/docs/geoindex-model/analysis.md)
 | `analysis/evaluate_mcd.py` | MCD coverage and calibration |
 | `analysis/visualize_gnn_graph.py` | GNN learned adjacency heatmap |
 
----
-
 ## Testing
 
 ```bash
@@ -201,8 +183,6 @@ conda activate ap
 pytest tests/ -v
 ```
 
----
-
 ## License
 
-See: [LICENSE](LICENSE)
+MIT License. See [LICENSE](LICENSE).
