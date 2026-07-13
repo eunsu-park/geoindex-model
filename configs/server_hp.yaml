@@ -1,0 +1,76 @@
+# Server Configuration for the hp30 target.
+#
+# Inherits server_ap.yaml (GPU server paths, table mode) and swaps everything
+# that is target-specific:
+#   - index directory    → total_hp/ (hp30 storm labels)
+#   - input variables     → 21 solar-wind columns + hp30 (ap30 is dropped)
+#   - GNN node grouping    → hp30 node replaces the ap30 node
+#   - regression target    → hp30
+#   - loss                 → mse (solar_wind_weighted is ap-tuned: NOAA ap
+#                            thresholds + denormalize, inappropriate for hp30)
+#
+# The Parquet file is shared with the ap run (it carries both ap30 and hp30);
+# the ap30 column is simply unused here.
+
+defaults:
+  - server_ap
+  - _self_
+
+# =============================================================================
+# Data (table mode, hp30 index + SW + hp30 input + hp30 target)
+# =============================================================================
+data:
+  timeseries:
+    train_index: "total_hp/train_index.csv"
+    validation_index: "total_hp/validation_index.csv"
+    test_index: "total_hp/validation_index.csv"
+
+    # Input: 21 solar-wind columns + hp30 (mirrors the ap config with hp30
+    # substituted for ap30).
+    input_variables:
+      - "v_avg"
+      - "v_min"
+      - "v_max"
+      - "np_avg"
+      - "np_min"
+      - "np_max"
+      - "t_avg"
+      - "t_min"
+      - "t_max"
+      - "bx_avg"
+      - "bx_min"
+      - "bx_max"
+      - "by_avg"
+      - "by_min"
+      - "by_max"
+      - "bz_avg"
+      - "bz_min"
+      - "bz_max"
+      - "bt_avg"
+      - "bt_min"
+      - "bt_max"
+      - "hp30"
+
+    # GNN node grouping: add the hp30 node. NOTE: Hydra deep-merges dicts, so
+    # the inherited ap30 node is NOT removed here — the launchers (train.sh /
+    # train_server.sh) drop it with `~data.timeseries.gnn_variable_groups.ap30`.
+    # A raw `python scripts/train.py --config-name=server_hp` must add that same
+    # override, else model creation fails (ap30 node not in input_variables).
+    gnn_variable_groups:
+      v: ["v_avg", "v_min", "v_max"]
+      np: ["np_avg", "np_min", "np_max"]
+      t: ["t_avg", "t_min", "t_max"]
+      bx: ["bx_avg", "bx_min", "bx_max"]
+      by: ["by_avg", "by_min", "by_max"]
+      bz: ["bz_avg", "bz_min", "bz_max"]
+      bt: ["bt_avg", "bt_min", "bt_max"]
+      hp30: ["hp30"]
+
+    target_variables:
+      - "hp30"
+
+# =============================================================================
+# Training (hp30-appropriate loss)
+# =============================================================================
+training:
+  regression_loss_type: "mse"

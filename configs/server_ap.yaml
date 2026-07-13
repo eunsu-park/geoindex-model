@@ -1,0 +1,38 @@
+# Server Configuration for the ap30 target (GPU server, ~/Storage/geoindex).
+#
+# Inherits local.yaml (table mode, batch/epoch/training settings) and replaces
+# the environment paths and the index directory. The ap30 input/target come
+# straight from base.yaml (input = 21 solar-wind columns + ap30, target = ap30),
+# so nothing extra is needed here for the model wiring.
+#
+# Expected data layout on the server:
+#   /home/eunsupark/Storage/geoindex/datasets/
+#     data.parquet
+#     total_ap/{train_index.csv, validation_index.csv}   # ap30 labels
+#     total_hp/{train_index.csv, validation_index.csv}   # hp30 labels
+#
+# Prereq:  conda activate geoindex
+
+defaults:
+  - local
+  - _self_
+
+# =============================================================================
+# Environment (GPU server, ~/Storage/geoindex)
+# =============================================================================
+environment:
+  device: "cuda"
+  data_root: "/home/eunsupark/Storage/geoindex/datasets"
+  save_root: "/home/eunsupark/Storage/geoindex/results"
+  num_workers: 8
+
+# =============================================================================
+# Data (table mode, ap30 index)
+# Window offsets (input_start/end, target_start/end) come from the +io= group.
+# =============================================================================
+data:
+  timeseries:
+    train_index: "total_ap/train_index.csv"
+    validation_index: "total_ap/validation_index.csv"
+    # No dedicated test split yet; fall back to the validation index.
+    test_index: "total_ap/validation_index.csv"
