@@ -33,6 +33,7 @@ FILTER=""
 MODEL_FILTER=""
 DRY_RUN=false
 EPOCH="best"
+CONFIG_NAME="local"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -60,13 +61,32 @@ while [[ $# -gt 0 ]]; do
             EPOCH="$2"
             shift 2
             ;;
+        --config-name)
+            CONFIG_NAME="$2"
+            shift 2
+            ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: ./saliency.sh [--config-file FILE] [--max-jobs N] [--filter PATTERN] [--model MODEL] [--dry-run] [--epoch EPOCH]"
+            echo "Usage: ./saliency.sh [--config-file FILE] [--max-jobs N] [--filter PATTERN] [--model MODEL] [--dry-run] [--epoch EPOCH] [--config-name NAME]"
             exit 1
             ;;
     esac
 done
+
+# =============================================================================
+# Experiment-name prefix + hp GNN-node fix (server profiles)
+#   server_ap -> "ap_" prefix ; server_hp -> "hp_" prefix + drop the inherited
+#   ap30 GNN node (hp inputs are SW + hp30). Other profiles keep legacy names.
+# =============================================================================
+case "$CONFIG_NAME" in
+    server_ap) EXP_PREFIX="ap_" ;;
+    server_hp) EXP_PREFIX="hp_" ;;
+    *)         EXP_PREFIX="" ;;
+esac
+EXTRA_ARGS=()
+if [[ "$CONFIG_NAME" == "server_hp" ]]; then
+    EXTRA_ARGS+=("~data.timeseries.gnn_variable_groups.ap30")
+fi
 
 # =============================================================================
 # Collect configs
@@ -106,7 +126,7 @@ else
 
     for io in "${IO_CONFIGS[@]}"; do
         for mdl in "${MODEL_CONFIGS[@]}"; do
-            exp_name="${io}_${mdl}"
+            exp_name="${EXP_PREFIX}${io}_${mdl}"
             CONFIGS+=("+io=${io} +model=${mdl} experiment.name=${exp_name}")
             DISPLAY_NAMES+=("${exp_name}")
         done
@@ -203,7 +223,7 @@ for idx in "${!CONFIGS[@]}"; do
     else
         # Config group mode: overrides passed as positional args
         # shellcheck disable=SC2086
-        python analysis/run_saliency.py --config-name=local $cfg saliency.epoch="$EPOCH" \
+        python analysis/run_saliency.py --config-name="$CONFIG_NAME" $cfg saliency.epoch="$EPOCH" "${EXTRA_ARGS[@]}" \
             > "$LOG_DIR/${display_name}.log" 2>&1 &
     fi
 

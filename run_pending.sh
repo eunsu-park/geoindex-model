@@ -74,6 +74,25 @@ if [[ -z "$SAVE_ROOT" || ! -d "$SAVE_ROOT" ]]; then
 fi
 
 # =============================================================================
+# Experiment-name prefix + hp GNN-node fix (server profiles)
+#   server_ap -> "ap_" prefix ; server_hp -> "hp_" prefix + drop the inherited
+#   ap30 GNN node. The prefix also scopes the save_root scan below so ap and hp
+#   results (ap_*/hp_*) are detected independently. Other profiles: no prefix.
+#   NOTE: server_hp inherits save_root from server_ap, so it is not literally in
+#   configs/server_hp.yaml — run this as `SAVE_ROOT=... ./run_pending.sh
+#   --config-name server_hp`.
+# =============================================================================
+case "$CONFIG_NAME" in
+    server_ap) EXP_PREFIX="ap_" ;;
+    server_hp) EXP_PREFIX="hp_" ;;
+    *)         EXP_PREFIX="" ;;
+esac
+EXTRA_ARGS=()
+if [[ "$CONFIG_NAME" == "server_hp" ]]; then
+    EXTRA_ARGS+=("~data.timeseries.gnn_variable_groups.ap30")
+fi
+
+# =============================================================================
 # Matrix definition
 # =============================================================================
 IO_CONFIGS=(
@@ -126,7 +145,7 @@ for phase in "${PHASE_LIST[@]}"; do
     read -r -a models <<< "$(models_for_phase "$phase")"
     for io in "${IO_CONFIGS[@]}"; do
         for m in "${models[@]}"; do
-            if [[ ! -f "$SAVE_ROOT/${io}_${m}/${marker}" ]]; then
+            if [[ ! -f "$SAVE_ROOT/${EXP_PREFIX}${io}_${m}/${marker}" ]]; then
                 TASKS+=("${phase}:${io}:${m}")
             fi
         done
@@ -218,7 +237,7 @@ for t in "${TASKS[@]}"; do
     rest=${t#*:}
     io=${rest%%:*}
     mdl=${rest#*:}
-    exp="${io}_${mdl}"
+    exp="${EXP_PREFIX}${io}_${mdl}"
     name="${phase}__${exp}"
 
     wait_for_slot
@@ -229,7 +248,7 @@ for t in "${TASKS[@]}"; do
     runner=$(runner_for_phase "$phase")
     python "$runner" --config-name="$CONFIG_NAME" \
         "+io=${io}" "+model=${mdl}" "experiment.name=${exp}" \
-        "${phase}.epoch=${EPOCH}" \
+        "${phase}.epoch=${EPOCH}" "${EXTRA_ARGS[@]}" \
         > "$LOG_DIR/${name}.log" 2>&1 &
     RUNNING_PIDS+=($!)
     RUNNING_NAMES+=("$name")

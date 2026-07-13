@@ -70,6 +70,24 @@ while [[ $# -gt 0 ]]; do
 done
 
 # =============================================================================
+# Experiment-name prefix (prevents ap/hp result collisions)
+# Derived from the config profile: server -> ap_, server_hp -> hp_.
+# Other profiles (local/dev/...) keep the legacy un-prefixed names.
+# =============================================================================
+case "$CONFIG_NAME" in
+    server_ap) EXP_PREFIX="ap_" ;;
+    server_hp) EXP_PREFIX="hp_" ;;
+    *)         EXP_PREFIX="" ;;
+esac
+
+# hp uses SW + hp30 inputs, so the inherited ap30 GNN node must be dropped
+# (Hydra deep-merges dicts, so it cannot be removed from within server_hp.yaml).
+EXTRA_ARGS=()
+if [[ "$CONFIG_NAME" == "server_hp" ]]; then
+    EXTRA_ARGS+=("~data.timeseries.gnn_variable_groups.ap30")
+fi
+
+# =============================================================================
 # Collect configs
 # =============================================================================
 CONFIGS=()
@@ -107,7 +125,7 @@ else
 
     for io in "${IO_CONFIGS[@]}"; do
         for mdl in "${MODEL_CONFIGS[@]}"; do
-            exp_name="${io}_${mdl}"
+            exp_name="${EXP_PREFIX}${io}_${mdl}"
             CONFIGS+=("+io=${io} +model=${mdl} experiment.name=${exp_name}")
             DISPLAY_NAMES+=("${exp_name}")
         done
@@ -133,6 +151,7 @@ fi
 echo "Filter:        ${FILTER:-none}"
 echo "Model:         ${MODEL_FILTER:-all}"
 echo "Config name:   $CONFIG_NAME"
+echo "Exp prefix:    ${EXP_PREFIX:-<none>}"
 echo "========================================"
 echo ""
 
@@ -204,7 +223,7 @@ for idx in "${!CONFIGS[@]}"; do
     else
         # Config group mode: overrides passed as positional args
         # shellcheck disable=SC2086
-        python scripts/train.py --config-name="$CONFIG_NAME" $cfg \
+        python scripts/train.py --config-name="$CONFIG_NAME" $cfg "${EXTRA_ARGS[@]}" \
             > "$LOG_DIR/${display_name}.log" 2>&1 &
     fi
 

@@ -51,6 +51,23 @@ while [[ $# -gt 0 ]]; do
 done
 
 # =============================================================================
+# Experiment-name prefix + hp GNN-node fix (server profiles)
+#   server_ap -> "ap_" prefix ; server_hp -> "hp_" prefix + drop the inherited
+#   ap30 GNN node (hp inputs are SW + hp30). Other profiles keep legacy names.
+#   NOTE: CV also needs configs/cv/fold*.yaml + fold index files regenerated for
+#   the new 1995-2025 data before use (see report).
+# =============================================================================
+case "$CONFIG_NAME" in
+    server_ap) EXP_PREFIX="ap_" ;;
+    server_hp) EXP_PREFIX="hp_" ;;
+    *)         EXP_PREFIX="" ;;
+esac
+EXTRA_ARGS=()
+if [[ "$CONFIG_NAME" == "server_hp" ]]; then
+    EXTRA_ARGS+=("~data.timeseries.gnn_variable_groups.ap30")
+fi
+
+# =============================================================================
 # Collect configs (model x fold cross product)
 # =============================================================================
 MODEL_CONFIGS=()
@@ -77,7 +94,7 @@ CONFIGS=()
 DISPLAY_NAMES=()
 for mdl in "${MODEL_CONFIGS[@]}"; do
     for fold in "${FOLDS[@]}"; do
-        exp_name="${IO}_${mdl}_${fold}"
+        exp_name="${EXP_PREFIX}${IO}_${mdl}_${fold}"
         CONFIGS+=("+io=${IO} +model=${mdl} +cv=${fold} experiment.name=${exp_name}")
         DISPLAY_NAMES+=("${exp_name}")
     done
@@ -161,7 +178,7 @@ for idx in "${!CONFIGS[@]}"; do
     echo "[START] $display_name  ($STARTED/$TOTAL, running: ${#RUNNING_PIDS[@]}+1)"
 
     # shellcheck disable=SC2086
-    python scripts/validate.py --config-name="$CONFIG_NAME" $cfg validation.epoch="$EPOCH" \
+    python scripts/validate.py --config-name="$CONFIG_NAME" $cfg validation.epoch="$EPOCH" "${EXTRA_ARGS[@]}" \
         > "$LOG_DIR/${display_name}.log" 2>&1 &
 
     RUNNING_PIDS+=($!)
