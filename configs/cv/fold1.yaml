@@ -2,6 +2,6 @@
 # CV Fold 1: train 1995..2005-12-30 (24h embargo), val 2006-01-01..2009-12-31
 data:
   timeseries:
-    train_index: "cv5/fold1/train_index.csv"
-    validation_index: "cv5/fold1/validation_index.csv"
-    stat_file: "cv5/fold1/table_stats.pkl"
+    train_index: "${cv_dir}/fold1/train_index.csv"
+    validation_index: "${cv_dir}/fold1/validation_index.csv"
+    stat_file: "${cv_dir}/fold1/table_stats.pkl"

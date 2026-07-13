@@ -23,6 +23,14 @@ experiment:
   batch_size: 4
 
 # =============================================================================
+# Cross-Validation
+# =============================================================================
+# Directory (under data_root) holding CV fold indices, referenced by
+# configs/cv/fold*.yaml via ${cv_dir}. Overridden per target
+# (server_ap -> cv5, server_hp -> cv5_hp).
+cv_dir: "cv5"
+
+# =============================================================================
 # Sampling Settings (Undersampling for class imbalance)
 # =============================================================================
 sampling:

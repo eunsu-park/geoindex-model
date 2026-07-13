@@ -26,6 +26,9 @@ environment:
   save_root: "/home/eunsupark/Storage/geoindex/results"
   num_workers: 8
 
+# CV fold index directory (ap labels), used by configs/cv/fold*.yaml.
+cv_dir: "cv5"
+
 # =============================================================================
 # Data (table mode, ap30 index)
 # Window offsets (input_start/end, target_start/end) come from the +io= group.

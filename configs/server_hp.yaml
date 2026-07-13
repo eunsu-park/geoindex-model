@@ -16,6 +16,9 @@ defaults:
   - server_ap
   - _self_
 
+# CV fold index directory (hp labels), used by configs/cv/fold*.yaml.
+cv_dir: "cv5_hp"
+
 # =============================================================================
 # Data (table mode, hp30 index + SW + hp30 input + hp30 target)
 # =============================================================================
