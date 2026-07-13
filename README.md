@@ -179,7 +179,7 @@ See: [analysis.md](../geoindex/docs/geoindex-model/analysis.md)
 ## Testing
 
 ```bash
-conda activate ap
+conda activate geoindex
 pytest tests/ -v
 ```
 
