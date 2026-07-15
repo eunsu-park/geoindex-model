@@ -25,6 +25,7 @@ import numpy as np
 
 # Import shared plotting and utility functions
 from .plotting import plot_prediction_timeseries, extract_file_names, denormalize_arrays
+from .uncertainty import mcd_sample_stats, uncertainty_metrics
 
 
 
@@ -239,6 +240,19 @@ class ResultsWriter:
                 f.write(f"\n  Total Samples:  {results['total_samples']}\n")
                 f.write(f"  Success Rate:   {results['success_rate']:.1f}%\n")
 
+                # MC-dropout calibration (raw; pre-recalibration) for the primary target.
+                cal = results.get('calibration')
+                if cal is not None:
+                    f.write("\n" + "=" * 80 + "\n")
+                    f.write("MC-DROPOUT CALIBRATION (raw)\n")
+                    f.write("=" * 80 + "\n\n")
+                    f.write(f"  PICP 1sigma:      {cal['picp_1sigma']:.3f}  (ideal 0.683)\n")
+                    f.write(f"  PICP 2sigma:      {cal['picp_2sigma']:.3f}  (ideal 0.954)\n")
+                    f.write(f"  Sharpness (2s):   {cal['sharpness_2sigma']:.4f}\n")
+                    f.write(f"  NLL (Gaussian):   {cal['nll_gaussian']:.4f}\n")
+                    f.write(f"  CRPS (Gaussian):  {cal['crps_gaussian']:.4f}\n")
+                    f.write(f"  MAE (MCD mean):   {cal['mae_mcd_mean']:.4f}\n")
+
                 # Per-variable metrics
                 f.write("\n" + "=" * 80 + "\n")
                 f.write("METRICS BY VARIABLE\n")
@@ -367,6 +381,9 @@ class Validator:
         # Settings from config
         self.save_plots = getattr(config.validation, 'save_plots', True)
         self.save_npz = getattr(config.validation, 'save_npz', True)
+        # MC-dropout is folded into the validation pass (always on, over every event).
+        # mcd_samples stochastic forwards per event build the predictive interval.
+        self.mcd_samples = int(getattr(config.validation, 'mcd_samples', 100))
 
         # Model type determines validation behavior
         self.model_type = getattr(config.model, 'model_type', 'fusion')
@@ -459,6 +476,17 @@ class Validator:
         if cosine_sim is not None:
             result['cosine_sim'] = cosine_sim
 
+        # Fold MC-dropout uncertainty into the same pass. The deterministic `predictions`
+        # above stay the headline (metrics are computed from them); the MCD stats are an
+        # additional, per-event predictive interval. Needs the normalizer (denorm happens
+        # per sample), which is set in validate() before the batch loop.
+        if self.normalizer is not None and self.mcd_samples > 0:
+            result['mcd'] = mcd_sample_stats(
+                self.model, inputs, sdo, self.normalizer,
+                self.target_variables, num_samples=self.mcd_samples
+            )
+            self.model.eval()  # mcd_sample_stats leaves eval; keep the model deterministic
+
         return result
 
     def validate(self, dataloader) -> Dict[str, Any]:
@@ -473,6 +501,10 @@ class Validator:
         # Store normalizer for denormalization in plots
         if hasattr(dataloader.dataset, 'normalizer'):
             self.normalizer = dataloader.dataset.normalizer
+
+        # Calibration accumulators for the primary target (denormalized true / MCD mean+std),
+        # pooled across all events to score the folded-in MC-dropout intervals.
+        self._cal_true, self._cal_mean, self._cal_std = [], [], []
 
         if self.logger:
             self.logger.info(f"Running validation (model_type: {self.model_type})...")
@@ -516,6 +548,15 @@ class Validator:
                 # Update aggregator
                 self.metrics_aggregator.update(batch_result, file_names)
 
+                # Accumulate calibration inputs for the primary target (index 0).
+                if 'mcd' in batch_result and self.normalizer is not None:
+                    tv = self.target_variables[0]
+                    true0 = self.normalizer.denormalize_omni(
+                        batch_result['targets'][..., 0], tv)
+                    self._cal_true.append(np.asarray(true0).ravel())
+                    self._cal_mean.append(batch_result['mcd']['mcd_mean'][..., 0].ravel())
+                    self._cal_std.append(batch_result['mcd']['mcd_std'][..., 0].ravel())
+
                 # Log progress periodically
                 if (batch_idx + 1) % report_freq == 0:
                     self.log_progress(batch_idx, len(dataloader))
@@ -534,6 +575,16 @@ class Validator:
             results['failed_batches'] = failed_batches
             results['success_rate'] = ((len(dataloader) - failed_batches) / len(dataloader)) * 100
             results['output_directory'] = str(self.results_writer.output_dir)
+
+            # Raw MC-dropout calibration for the primary target (headline stays deterministic).
+            # Post-hoc recalibration (per-run sigma scale) is a separate step:
+            # analysis/recalibrate_mcd.py reads validation/<epoch>/npz.zip.
+            if self._cal_true:
+                results['calibration'] = uncertainty_metrics(
+                    np.concatenate(self._cal_true),
+                    np.concatenate(self._cal_mean),
+                    np.concatenate(self._cal_std),
+                )
 
             # Log summary
             self.log_summary(results)
@@ -616,6 +667,8 @@ class Validator:
         targets = batch_result['targets']
         predictions = batch_result['predictions']
 
+        mcd = batch_result.get('mcd')
+
         for i, file_name in enumerate(file_names):
             file_name_base = os.path.splitext(file_name)[0]
             npz_path = npz_dir / f"{file_name_base}.npz"
@@ -631,14 +684,22 @@ class Validator:
                     self.normalizer, targets=tgt
                 )
 
-            np.savez_compressed(
-                npz_path,
-                inputs=inp,
-                targets=tgt,
-                predictions=pred,
-                input_variables=self.input_variables,
-                target_variables=self.target_variables
-            )
+            arrays = {
+                'anchor': file_name_base,
+                'inputs': inp,
+                'targets': tgt,
+                'predictions': pred,
+                'input_variables': self.input_variables,
+                'target_variables': self.target_variables,
+            }
+            # MC-dropout predictive interval (already denormalized), per-event slice.
+            # mcd_mean/std/min/max/median + empirical 90% (q05/q95) and 95% (q025/q975)
+            # bands so downstream can use a Gaussian or a distribution-free interval.
+            if mcd is not None:
+                for key, val in mcd.items():
+                    arrays[key] = val if key == 'n_samples' else val[i]
+
+            np.savez_compressed(npz_path, **arrays)
 
     def log_progress(self, batch_idx: int, total_batches: int):
         """Log validation progress.

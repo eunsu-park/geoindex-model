@@ -1,9 +1,13 @@
-"""Tests for src/validators.py — MetricsAggregator and ResultsWriter components."""
+"""Tests for src/validators.py — MetricsAggregator, ResultsWriter, and MCD-in-validation."""
 
 import numpy as np
 import pytest
+import torch
+import torch.nn as nn
+from omegaconf import OmegaConf
 
-from src.validators import MetricsAggregator, ResultsWriter
+from src.validators import MetricsAggregator, ResultsWriter, Validator
+from src.pipeline import Normalizer
 
 
 # ---------------------------------------------------------------------------
@@ -221,3 +225,94 @@ class TestResultsWriter:
         deep_path = tmp_path / "a" / "b" / "c"
         writer = ResultsWriter(str(deep_path))
         assert deep_path.exists()
+
+
+# ---------------------------------------------------------------------------
+# MC-dropout folded into the validation pass
+# ---------------------------------------------------------------------------
+class _TinyDropoutModel(nn.Module):
+    """Model with a live Dropout; forward signature (inputs, sdo, return_features)."""
+
+    def __init__(self, target_len=4, n_vars=1, features=3, p=0.5):
+        super().__init__()
+        self.drop = nn.Dropout(p)
+        self.lin = nn.Linear(features, target_len * n_vars)
+        self.target_len, self.n_vars = target_len, n_vars
+
+    def forward(self, inputs, sdo=None, return_features=False):
+        out = self.lin(self.drop(inputs.mean(dim=1)))
+        return out.view(-1, self.target_len, self.n_vars)
+
+
+class _FakeLoader:
+    def __init__(self, batches, normalizer):
+        self.batches = batches
+        self.dataset = type("DS", (), {"normalizer": normalizer})()
+
+    def __iter__(self):
+        return iter(self.batches)
+
+    def __len__(self):
+        return len(self.batches)
+
+
+class TestMcdInValidation:
+    """Validator.validate() folds MC-dropout into the per-event npz + calibration block."""
+
+    def _make(self, tmp_path, mcd_samples=16):
+        input_vars, target_vars = ["v", "np", "t"], ["ap30"]
+        config = OmegaConf.create({
+            "validation": {"save_plots": False, "save_npz": True,
+                           "output_dir": str(tmp_path), "report_freq": 50,
+                           "compute_alignment": False, "mcd_samples": mcd_samples},
+            "model": {"model_type": "gnn_patchtst"},
+            "data": {"modalities": {"timeseries": True},
+                     "timeseries": {"input_variables": input_vars,
+                                    "target_variables": target_vars}},
+        })
+        normalizer = Normalizer(stat_dict={"ap30": {"mean": 0.0, "std": 1.0},
+                                           "v": {"mean": 0.0, "std": 1.0},
+                                           "np": {"mean": 0.0, "std": 1.0},
+                                           "t": {"mean": 0.0, "std": 1.0}},
+                                method_config={"default": "zscore"})
+        torch.manual_seed(0)
+        model = _TinyDropoutModel(target_len=4, n_vars=1, features=3)
+        batch = {
+            "inputs": torch.randn(3, 6, 3),
+            "targets": torch.randn(3, 4, 1),
+            "file_names": ["20220101000000", "20220101003000", "20220101010000"],
+        }
+        loader = _FakeLoader([batch], normalizer)
+        validator = Validator(config, model, nn.MSELoss(), torch.device("cpu"))
+        return validator, loader, tmp_path
+
+    def test_npz_carries_full_uncertainty_schema(self, tmp_path):
+        validator, loader, out = self._make(tmp_path)
+        validator.validate(loader)
+        npz_files = sorted((out / "npz").glob("*.npz"))
+        assert len(npz_files) == 3
+        data = np.load(npz_files[0], allow_pickle=True)
+        expected = {"anchor", "inputs", "targets", "predictions",
+                    "input_variables", "target_variables",
+                    "mcd_mean", "mcd_std", "mcd_min", "mcd_max", "mcd_median",
+                    "mcd_q025", "mcd_q05", "mcd_q95", "mcd_q975", "n_samples"}
+        assert expected <= set(data.files)
+        assert int(data["n_samples"]) == 16
+        assert str(data["anchor"]) == "20220101000000"
+        assert data["mcd_mean"].shape == (4, 1)
+
+    def test_calibration_block_written(self, tmp_path):
+        validator, loader, out = self._make(tmp_path)
+        results = validator.validate(loader)
+        assert "calibration" in results
+        for key in ("picp_1sigma", "picp_2sigma", "crps_gaussian", "nll_gaussian"):
+            assert key in results["calibration"]
+        assert "MC-DROPOUT CALIBRATION" in (out / "validation_results.txt").read_text()
+
+    def test_deterministic_predictions_are_headline(self, tmp_path):
+        """Headline predictions come from the deterministic (dropout-off) forward."""
+        validator, loader, out = self._make(tmp_path)
+        validator.validate(loader)
+        data = np.load(sorted((out / "npz").glob("*.npz"))[0], allow_pickle=True)
+        # deterministic predictions differ from the MCD sample mean (dropout on)
+        assert not np.allclose(data["predictions"], data["mcd_mean"])

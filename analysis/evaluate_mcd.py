@@ -23,12 +23,16 @@ import numpy as np
 from scipy import stats as scipy_stats
 
 
-def load_mcd_npz(results_dir, experiment):
-    """Load all MCD npz from a zip archive.
+def load_mcd_npz(results_dir, experiment, epoch='best', target_index=0):
+    """Load the folded-in MC-dropout arrays from a validation zip archive.
+
+    MC-dropout is folded into the validation pass, so uncertainty lives in
+    ``<experiment>/validation/<epoch>/npz.zip`` (keys ``mcd_mean``/``mcd_std``/``targets``,
+    each shape (target_len, n_target_vars)). Returns the primary target channel.
 
     Returns arrays: all_means, all_stds, all_targets (concatenated).
     """
-    zip_path = os.path.join(results_dir, experiment, 'mcd', 'best', 'npz.zip')
+    zip_path = os.path.join(results_dir, experiment, 'validation', epoch, 'npz.zip')
     if not os.path.exists(zip_path):
         return None
 
@@ -39,10 +43,12 @@ def load_mcd_npz(results_dir, experiment):
     with zipfile.ZipFile(zip_path) as z:
         npz_files = [n for n in z.namelist() if n.endswith('.npz')]
         for name in npz_files:
-            data = np.load(io.BytesIO(z.read(name)))
-            all_means.append(data['mean'])      # (target_len,)
-            all_stds.append(data['std'])         # (target_len,)
-            all_targets.append(data['target'])   # (target_len,)
+            data = np.load(io.BytesIO(z.read(name)), allow_pickle=True)
+            if 'mcd_mean' not in data:
+                continue  # a validation npz without folded MCD
+            all_means.append(np.asarray(data['mcd_mean'])[:, target_index])
+            all_stds.append(np.asarray(data['mcd_std'])[:, target_index])
+            all_targets.append(np.asarray(data['targets'])[:, target_index])
 
     if not all_means:
         return None

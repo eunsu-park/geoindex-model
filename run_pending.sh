@@ -1,19 +1,21 @@
 #!/bin/bash
-# Run pending validation / MCD / attention jobs in parallel.
+# Run pending validation / attention jobs in parallel.
 #
 # Scans save_root for missing outputs across the io x model matrix and
 # executes only the combinations whose expected artifact is absent.
 # Safe to re-run — completed experiments are skipped automatically.
 #
+# MC-dropout uncertainty is folded into the validation pass (no separate mcd phase);
+# the per-event npz under validation/ carries the predictive interval.
+#
 # Completion markers (per phase, under {save_root}/{experiment}/):
 #   validation/{epoch}/validation_results.csv
-#   mcd/{epoch}/npz.zip
 #   attention/{epoch}/npz.zip   (only for transformer, patchtst,
 #                                gnn_transformer, gnn_patchtst)
 #
 # Usage:
-#   ./run_pending.sh                              # validation + mcd + attention
-#   ./run_pending.sh --phases mcd,attention       # subset (comma-separated)
+#   ./run_pending.sh                              # validation + attention
+#   ./run_pending.sh --phases attention           # subset (comma-separated)
 #   ./run_pending.sh --phases validation          # single phase
 #   ./run_pending.sh --dry-run                    # print tasks, do not execute
 #   ./run_pending.sh --max-jobs 4 --epoch best
@@ -31,7 +33,7 @@ cd "$SCRIPT_DIR"
 MAX_JOBS=8
 EPOCH="best"
 DRY_RUN=false
-PHASES="validation,mcd,attention"
+PHASES="validation,attention"
 CONFIG_NAME="local"
 
 while [[ $# -gt 0 ]]; do
@@ -49,8 +51,8 @@ done
 IFS=',' read -r -a PHASE_LIST <<< "$PHASES"
 for p in "${PHASE_LIST[@]}"; do
     case $p in
-        validation|mcd|attention) ;;
-        *) echo "Invalid phase: $p (allowed: validation, mcd, attention)"; exit 1 ;;
+        validation|attention) ;;
+        *) echo "Invalid phase: $p (allowed: validation, attention)"; exit 1 ;;
     esac
 done
 
@@ -113,7 +115,6 @@ ATTN_MODELS=(transformer patchtst gnn_transformer gnn_patchtst)
 marker_for_phase() {
     case $1 in
         validation) echo "validation/${EPOCH}/validation_results.csv" ;;
-        mcd)        echo "mcd/${EPOCH}/npz.zip" ;;
         attention)  echo "attention/${EPOCH}/npz.zip" ;;
     esac
 }
@@ -122,7 +123,6 @@ marker_for_phase() {
 runner_for_phase() {
     case $1 in
         validation) echo "scripts/validate.py" ;;
-        mcd)        echo "analysis/run_mcd.py" ;;
         attention)  echo "analysis/run_attention.py" ;;
     esac
 }

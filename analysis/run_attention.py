@@ -293,8 +293,8 @@ def main(config: DictConfig):
         print("\nAlternative analyses for this model type:")
         print("  - Saliency analysis (Grad-CAM, Integrated Gradients):")
         print("      python analysis/run_saliency.py --config-name=local saliency.epoch=10")
-        print("  - Monte Carlo Dropout (uncertainty estimation):")
-        print("      python analysis/monte_carlo_dropout.py --config-name=local mcd.epoch=10")
+        print("  - MC-dropout uncertainty is folded into validation:")
+        print("      python scripts/validate.py ... (per-event interval in validation/ npz)")
         print("=" * 70 + "\n")
         return
 

@@ -495,6 +495,9 @@ validation:
   save_plots: true
   save_npz: true
   report_freq: 50
+  # MC-dropout is folded into validation (over every event): num stochastic forwards
+  # per event that build the predictive interval stored in the per-event npz.
+  mcd_samples: 100
 
 # =============================================================================
 # Test Settings (Inference with or without ground truth)
@@ -506,17 +509,6 @@ test:
   report_freq: 50
   save_plots: true
   save_npz: true
-
-# =============================================================================
-# Monte Carlo Dropout Settings
-# =============================================================================
-mcd:
-  epoch: null
-  checkpoint_path: ""
-  output_dir: ""
-  num_mc_samples: 100
-  create_plots: true
-  n_std: 2.0
 
 # =============================================================================
 # Saliency Analysis Settings
