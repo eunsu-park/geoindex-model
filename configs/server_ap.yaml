@@ -24,10 +24,23 @@ environment:
   device: "cuda"
   data_root: "/home/eunsupark/Storage/geoindex/datasets"
   save_root: "/home/eunsupark/Storage/geoindex/results"
-  num_workers: 8
+  # Single RTX 3090: run_pending/analysis launchers use --max-jobs 4, so keep
+  # 4 loader workers per process (4 jobs x 4 = 16 workers) to avoid CPU
+  # oversubscription. Table data is in-memory, so few workers suffice.
+  num_workers: 4
 
 # CV fold index directory (ap labels), used by configs/cv/fold*.yaml.
 cv_dir: "cv5"
+
+# =============================================================================
+# Monte Carlo Dropout (batch runs on a single GPU)
+#   MCD is the dominant cost (num_mc_samples forward passes per sample); 50 is
+#   ample for uncertainty and halves the cost vs the base default of 100.
+#   Plots are skipped in batch mode — regenerate only for the selected model.
+# =============================================================================
+mcd:
+  num_mc_samples: 50
+  create_plots: false
 
 # =============================================================================
 # Data (table mode, ap30 index)
