@@ -17,10 +17,15 @@ Metric/recalibration math ported from the MAGIA project (``magia/eval/{evaluate,
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import torch
 import torch.nn as nn
-from scipy.special import erf
+
+# Vectorized error function without a scipy dependency (validate.py is a core path and
+# the env does not ship scipy). math.erf is C-accurate; np.vectorize maps it elementwise.
+_erf = np.vectorize(math.erf, otypes=[np.float64])
 
 # Empirical quantiles stored per event, in ascending order.
 QUANTILE_LEVELS = (0.025, 0.05, 0.5, 0.95, 0.975)
@@ -113,7 +118,7 @@ def uncertainty_metrics(true: np.ndarray, mean: np.ndarray, std: np.ndarray) -> 
     mean = np.asarray(mean, dtype=np.float64).ravel()
     std = np.clip(np.asarray(std, dtype=np.float64).ravel(), 1e-6, None)
     z = (true - mean) / std
-    cdf = 0.5 * (1.0 + erf(z / np.sqrt(2.0)))
+    cdf = 0.5 * (1.0 + _erf(z / np.sqrt(2.0)))
     pdf = np.exp(-0.5 * z ** 2) / np.sqrt(2.0 * np.pi)
     crps = std * (z * (2.0 * cdf - 1.0) + 2.0 * pdf - 1.0 / np.sqrt(np.pi))
     nll = 0.5 * np.log(2.0 * np.pi * std ** 2) + 0.5 * z ** 2
