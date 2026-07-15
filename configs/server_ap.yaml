@@ -34,12 +34,12 @@ cv_dir: "cv5"
 
 # =============================================================================
 # Monte Carlo Dropout (batch runs on a single GPU)
-#   MCD is the dominant cost (num_mc_samples forward passes per sample); 50 is
-#   ample for uncertainty and halves the cost vs the base default of 100.
-#   Plots are skipped in batch mode — regenerate only for the selected model.
+#   num_mc_samples kept at the full 100 forward passes per sample for the best
+#   uncertainty estimate. Plots are skipped in batch mode — regenerate only for
+#   the selected model.
 # =============================================================================
 mcd:
-  num_mc_samples: 50
+  num_mc_samples: 100
   create_plots: false
 
 # =============================================================================
