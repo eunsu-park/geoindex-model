@@ -9,10 +9,29 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.pipeline import Normalizer, OnlineStatistics, hours_to_index, CSVEventReader
+from src.pipeline.normalizer import method_is_nonnegative
 
 
 class TestNormalizer:
     """Tests for Normalizer class."""
+
+    def test_method_is_nonnegative(self):
+        """log/log1p methods are non-negative; zscore/minmax are sign-preserving."""
+        assert method_is_nonnegative('log_zscore') is True
+        assert method_is_nonnegative('log1p_zscore') is True
+        assert method_is_nonnegative('zscore') is False
+        assert method_is_nonnegative('minmax') is False
+
+    def test_is_nonnegative_uses_variable_method(self):
+        """is_nonnegative resolves the per-variable method (with default fallback)."""
+        method_config = {
+            'default': 'zscore',
+            'methods': {'ap30': 'log1p_zscore', 'dst': 'zscore'},
+        }
+        normalizer = Normalizer(method_config=method_config)
+        assert normalizer.is_nonnegative('ap30') is True    # log1p -> clip at 0
+        assert normalizer.is_nonnegative('dst') is False     # signed -> keep sign
+        assert normalizer.is_nonnegative('unlisted') is False  # falls back to default zscore
 
     def test_normalize_sdo_range(self):
         """SDO normalization should map [0, 255] to [-1, 1]."""

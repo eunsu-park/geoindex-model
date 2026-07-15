@@ -12,6 +12,26 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
+# Normalization methods whose transform is defined only on non-negative values.
+# log/log1p map a non-negative domain; zscore/minmax are sign-preserving. This is
+# the single source of truth for deciding whether a denormalized prediction may be
+# clipped at 0 (ap30/hp30) or must keep its sign (e.g. Dst/SYM-H).
+NONNEGATIVE_METHODS = frozenset({'log_zscore', 'log1p_zscore'})
+
+
+def method_is_nonnegative(method: str) -> bool:
+    """Return True if a normalization method implies a non-negative value range.
+
+    Args:
+        method: Normalization method name ('zscore', 'log_zscore',
+            'log1p_zscore', 'minmax').
+
+    Returns:
+        True for log/log1p methods (non-negative domain), False otherwise.
+    """
+    return method in NONNEGATIVE_METHODS
+
+
 # =============================================================================
 # Normalizer
 # =============================================================================
@@ -56,6 +76,21 @@ class Normalizer:
         """
         methods = self.method_config.get('methods', {})
         return methods.get(variable, self.default_method)
+
+    def is_nonnegative(self, variable: str) -> bool:
+        """Return True if the variable's normalization implies a non-negative range.
+
+        log/log1p transforms are defined on non-negative values; zscore/minmax are
+        not. Used to decide whether a denormalized prediction may be clipped at 0
+        (ap30/hp30) or must keep its sign (e.g. Dst/SYM-H).
+
+        Args:
+            variable: Variable name.
+
+        Returns:
+            True for log/log1p-normalized variables, False otherwise.
+        """
+        return method_is_nonnegative(self.get_method(variable))
 
     def normalize_sdo(self, data: np.ndarray) -> np.ndarray:
         """Normalize SDO image data from [0, 255] to [-1, 1].

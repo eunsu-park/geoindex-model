@@ -473,6 +473,39 @@ class TestSolarWindWeightedLoss:
             rtol=1e-4
         ), f"Denormalized value should be ~50, got {raw_target[0, 0, 0]}"
 
+    def test_denormalization_log1p_clips_negative(self):
+        """log1p_zscore (non-negative) denorm clamps to 0 for tier assignment."""
+        norm_stats = {'log1p_mean': 2.5, 'log1p_std': 1.2}
+        loss_fn = SolarWindWeightedLoss(
+            weighting_mode='multi_tier',
+            combine_temporal=False,
+            denormalize=True,
+            norm_method='log1p_zscore',
+            norm_stats=norm_stats,
+        )
+        # A strongly negative normalized value would expm1 below 0; must clamp at 0.
+        normalized_target = torch.tensor([[[-5.0]]], dtype=torch.float32)
+        raw_target = loss_fn._denormalize_target(normalized_target)
+        assert raw_target[0, 0, 0] >= 0.0
+
+    def test_denormalization_zscore_preserves_sign(self):
+        """zscore (signed) denorm must keep negative values (e.g. Dst storms)."""
+        # mean=-20, std=30: a normalized -2.0 -> raw -80 nT (a strong storm).
+        norm_stats = {'mean': -20.0, 'std': 30.0}
+        loss_fn = SolarWindWeightedLoss(
+            weighting_mode='multi_tier',
+            combine_temporal=False,
+            denormalize=True,
+            norm_method='zscore',
+            norm_stats=norm_stats,
+        )
+        normalized_target = torch.tensor([[[-2.0]]], dtype=torch.float32)
+        raw_target = loss_fn._denormalize_target(normalized_target)
+        # Signed target must NOT be clamped to 0 — the storm depth is preserved.
+        assert torch.isclose(
+            raw_target[0, 0, 0], torch.tensor(-80.0, dtype=torch.float32), rtol=1e-4
+        ), f"Signed denorm should be ~-80, got {raw_target[0, 0, 0]}"
+
     def test_denormalization_affects_weights(self):
         """Test that denormalization correctly affects weight assignment."""
         # Simulate normalization: Ap=50 (G2 tier, weight=4.0)

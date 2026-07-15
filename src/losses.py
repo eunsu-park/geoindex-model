@@ -25,6 +25,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from .pipeline.normalizer import method_is_nonnegative
+
 
 # =============================================================================
 # Weighted Regression Losses
@@ -388,14 +390,13 @@ class SolarWindWeightedLoss(nn.Module):
             log1p_data = target * log1p_std + log1p_mean
             # Reverse log1p: raw = exp(log1p_data) - 1
             raw_target = torch.expm1(log1p_data)
-            # Clamp to valid Ap range (non-negative)
-            return torch.clamp(raw_target, min=0.0)
+            return self._clip_if_nonnegative(raw_target)
 
         elif self.norm_method == 'zscore':
             mean = self.norm_stats.get('mean', 0.0)
             std = self.norm_stats.get('std', 1.0)
             raw_target = target * std + mean
-            return torch.clamp(raw_target, min=0.0)
+            return self._clip_if_nonnegative(raw_target)
 
         elif self.norm_method == 'log_zscore':
             log_mean = self.norm_stats.get('log_mean', 0.0)
@@ -407,11 +408,29 @@ class SolarWindWeightedLoss(nn.Module):
             min_val = self.norm_stats.get('min', 0.0)
             max_val = self.norm_stats.get('max', 1.0)
             raw_target = target * (max_val - min_val) + min_val
-            return torch.clamp(raw_target, min=0.0)
+            return self._clip_if_nonnegative(raw_target)
 
         else:
             # Unknown method, return as-is
             return target
+
+    def _clip_if_nonnegative(self, raw_target: torch.Tensor) -> torch.Tensor:
+        """Clamp to non-negative only when the normalization implies a non-negative range.
+
+        Non-negative targets (ap30/hp30 under log/log1p) are clamped at 0 for correct
+        tier assignment. Signed targets (e.g. Dst under zscore) must keep their sign,
+        otherwise negative storm values collapse to 0 and the tier weighting degrades
+        to plain temporal-MSE.
+
+        Args:
+            raw_target: Denormalized target tensor in the original index scale.
+
+        Returns:
+            The tensor, clamped at 0 for non-negative methods, unchanged otherwise.
+        """
+        if method_is_nonnegative(self.norm_method):
+            return torch.clamp(raw_target, min=0.0)
+        return raw_target
 
     def _compute_threshold_weights(self, target: torch.Tensor) -> torch.Tensor:
         """Compute threshold-based binary weights.
