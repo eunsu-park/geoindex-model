@@ -28,6 +28,7 @@ import argparse
 import io
 import json
 import os
+import re
 import sys
 import zipfile
 
@@ -142,9 +143,11 @@ def main():
     if args.experiment:
         experiments = [args.experiment]
     else:
+        # Run dirs carry an io token like ``in2d_out12h`` optionally behind an index
+        # prefix (``ap_``/``hp_``); match the token anywhere so all prefixes are found.
         experiments = sorted(
             d for d in os.listdir(args.results_dir)
-            if d.startswith("in") and os.path.isdir(os.path.join(args.results_dir, d))
+            if re.search(r"(?:^|_)in\d", d) and os.path.isdir(os.path.join(args.results_dir, d))
         )
         if args.filter:
             experiments = [e for e in experiments if args.filter in e]
