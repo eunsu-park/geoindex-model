@@ -59,12 +59,12 @@ done
 #   the new 1995-2025 data before use (see report).
 # =============================================================================
 case "$CONFIG_NAME" in
-    server_ap) EXP_PREFIX="ap_" ;;
-    server_hp) EXP_PREFIX="hp_" ;;
-    *)         EXP_PREFIX="" ;;
+    server_ap|mac_ap) EXP_PREFIX="ap_" ;;
+    server_hp|mac_hp) EXP_PREFIX="hp_" ;;
+    *)                EXP_PREFIX="" ;;
 esac
 EXTRA_ARGS=()
-if [[ "$CONFIG_NAME" == "server_hp" ]]; then
+if [[ "$CONFIG_NAME" == "server_hp" || "$CONFIG_NAME" == "mac_hp" ]]; then
     EXTRA_ARGS+=("~data.timeseries.gnn_variable_groups.ap30")
 fi
 

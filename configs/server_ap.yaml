@@ -56,3 +56,9 @@ data:
     # whichever runs last overwrites it with its own variable set
     # (the hp sweep dropped ap30 from the shared cache on 2026-07).
     stat_file: "table_stats_ap.pkl"
+
+# Batch sweeps: skip per-sample validation plots (plots.zip is ~0.5–1.5 GB per
+# run and pollutes the cloud-synced results tree; regenerate on demand for a
+# selected model only).
+validation:
+  save_plots: false
