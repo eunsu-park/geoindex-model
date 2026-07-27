@@ -10,8 +10,8 @@ defaults:
 # =============================================================================
 environment:
   device: "cuda"
-  data_root: "/opt/nas/ap_share/dataset"
-  save_root: "/opt/nas/ap_share/results"
+  data_root: "/Users/eunsupark/Projects/GeoIndex/datasets"  # NOTE: /opt/nas/ap_share holds the INVALID April (label-shifted) data — evidence only
+  save_root: "/Users/eunsupark/Projects/GeoIndex/results"
   num_workers: 8
 
 # =============================================================================

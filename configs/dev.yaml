@@ -1,4 +1,4 @@
-# Dev Configuration (local Mac with OneDrive-synced dataset)
+# Dev Configuration (local Mac, ~/Projects/GeoIndex)
 # Inherits every override from local.yaml and only replaces the environment paths.
 
 defaults:
@@ -6,12 +6,12 @@ defaults:
   - _self_
 
 # =============================================================================
-# Environment (local Mac, OneDrive-synced dataset/results)
+# Environment (local Mac, cloud-synced ~/Projects/GeoIndex (shared with the GPU server))
 # =============================================================================
 environment:
   device: "mps"
-  data_root: "/Users/eunsupark/OneDrive/SHARE/AP/dataset"
-  save_root: "/Users/eunsupark/OneDrive/SHARE/AP/results"
+  data_root: "/Users/eunsupark/Projects/GeoIndex/datasets"
+  save_root: "/Users/eunsupark/Projects/GeoIndex/results"
   num_workers: 8
 
 # =============================================================================

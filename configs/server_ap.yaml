@@ -1,4 +1,4 @@
-# Server Configuration for the ap30 target (GPU server, ~/Storage/geoindex).
+# Server Configuration for the ap30 target (GPU server, ~/Projects/GeoIndex (cloud-synced; also mounted on the Mac)).
 #
 # Inherits local.yaml (table mode, batch/epoch/training settings) and replaces
 # the environment paths and the index directory. The ap30 input/target come
@@ -6,7 +6,7 @@
 # so nothing extra is needed here for the model wiring.
 #
 # Expected data layout on the server:
-#   /home/eunsupark/Storage/geoindex/datasets/
+#   /home/eunsupark/Projects/GeoIndex/datasets/
 #     data.parquet
 #     total_ap/{train_index.csv, validation_index.csv}   # ap30 labels
 #     total_hp/{train_index.csv, validation_index.csv}   # hp30 labels
@@ -18,12 +18,12 @@ defaults:
   - _self_
 
 # =============================================================================
-# Environment (GPU server, ~/Storage/geoindex)
+# Environment (GPU server, ~/Projects/GeoIndex (cloud-synced; also mounted on the Mac))
 # =============================================================================
 environment:
   device: "cuda"
-  data_root: "/home/eunsupark/Storage/geoindex/datasets"
-  save_root: "/home/eunsupark/Storage/geoindex/results"
+  data_root: "/home/eunsupark/Projects/GeoIndex/datasets"
+  save_root: "/home/eunsupark/Projects/GeoIndex/results"
   # Single RTX 3090: run_pending/analysis launchers use --max-jobs 4, so keep
   # 4 loader workers per process (4 jobs x 4 = 16 workers) to avoid CPU
   # oversubscription. Table data is in-memory, so few workers suffice.
