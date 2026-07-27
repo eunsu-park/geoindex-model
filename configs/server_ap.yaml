@@ -52,3 +52,7 @@ data:
     validation_index: "total_ap/validation_index.csv"
     # No dedicated test split yet; fall back to the validation index.
     test_index: "total_ap/validation_index.csv"
+    # Per-target stats cache: ap and hp runs must not share one file —
+    # whichever runs last overwrites it with its own variable set
+    # (the hp sweep dropped ap30 from the shared cache on 2026-07).
+    stat_file: "table_stats_ap.pkl"

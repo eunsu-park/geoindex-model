@@ -27,6 +27,10 @@ data:
     train_index: "total_hp/train_index.csv"
     validation_index: "total_hp/validation_index.csv"
     test_index: "total_hp/validation_index.csv"
+    # Per-target stats cache: ap and hp runs must not share one file —
+    # whichever runs last overwrites it with its own variable set
+    # (the hp sweep dropped ap30 from the shared cache on 2026-07).
+    stat_file: "table_stats_hp.pkl"
 
     # Input: 21 solar-wind columns + hp30 (mirrors the ap config with hp30
     # substituted for ap30).
