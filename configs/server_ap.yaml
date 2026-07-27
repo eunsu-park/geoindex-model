@@ -30,7 +30,7 @@ environment:
   num_workers: 4
 
 # CV fold index directory (ap labels), used by configs/cv/fold*.yaml.
-cv_dir: "cv5"
+cv_dir: "cv5_ap"
 
 # =============================================================================
 # Monte Carlo Dropout (batch runs on a single GPU)
