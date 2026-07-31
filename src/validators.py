@@ -298,6 +298,8 @@ class ResultsWriter:
                     f.write("=" * 80 + "\n")
                     f.write("METRICS BY VARIABLE (raw / original units)\n")
                     f.write("=" * 80 + "\n\n")
+                    # MAPE is omitted here: ap30/hp30 contain exact zeros, so
+                    # percentage error is undefined/explosive in raw units.
                     for var_name, metrics in results['per_variable_raw'].items():
                         f.write(f"{var_name}:\n")
                         f.write(f"  MAE:   {metrics['mae']:.4f}\n")
@@ -305,7 +307,6 @@ class ResultsWriter:
                         f.write(f"  R2:    {metrics['r2_score']:.4f}\n")
                         f.write(f"  Max Error: {metrics['max_error']:.4f}\n")
                         f.write(f"  Median AE: {metrics['median_absolute_error']:.4f}\n")
-                        f.write(f"  MAPE:  {metrics['mape']:.2f}%\n")
                         f.write(f"  Bias:  {metrics['bias']:.4f}\n")
                         f.write("\n")
 
