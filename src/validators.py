@@ -282,12 +282,18 @@ class ResultsWriter:
             else:
                 print(f"Error: {error_msg}")
 
-    def write_csv(self, file_results: List[Dict[str, Any]], target_variables: List[str]):
+    def write_csv(self, file_results: List[Dict[str, Any]], target_variables: List[str],
+                  normalizer=None):
         """Write detailed CSV file.
+
+        The target/prediction columns are in normalized (model) space. When a
+        normalizer is provided, target_raw/prediction_raw/absolute_error_raw
+        columns in original physical units are appended (matching the npz files).
 
         Args:
             file_results: List of per-file results.
             target_variables: List of target variable names.
+            normalizer: Optional Normalizer used to add raw-unit columns.
         """
         csv_path = self.output_dir / "validation_results.csv"
 
@@ -295,6 +301,8 @@ class ResultsWriter:
             with open(csv_path, 'w', newline='') as csvfile:
                 fieldnames = ['file_name', 'target', 'prediction', 'error',
                             'absolute_error', 'squared_error']
+                if normalizer is not None:
+                    fieldnames += ['target_raw', 'prediction_raw', 'absolute_error_raw']
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
                 writer.writeheader()
 
@@ -304,6 +312,16 @@ class ResultsWriter:
                     predictions = result['predictions']
 
                     n_groups, n_variables = targets.shape
+
+                    raw_targets = raw_predictions = None
+                    if normalizer is not None:
+                        raw_targets = np.asarray(targets, dtype=float).copy()
+                        raw_predictions = np.asarray(predictions, dtype=float).copy()
+                        for var_idx, var_name in enumerate(target_variables):
+                            raw_targets[:, var_idx] = normalizer.denormalize_omni(
+                                raw_targets[:, var_idx], var_name)
+                            raw_predictions[:, var_idx] = normalizer.denormalize_omni(
+                                raw_predictions[:, var_idx], var_name)
 
                     for var_idx, var_name in enumerate(target_variables):
                         for group_idx in range(n_groups):
@@ -315,14 +333,21 @@ class ResultsWriter:
 
                             full_identifier = f"{file_name}_group{group_idx}_{var_name}"
 
-                            writer.writerow({
+                            row = {
                                 'file_name': full_identifier,
                                 'target': target_val,
                                 'prediction': pred_val,
                                 'error': error,
                                 'absolute_error': abs_error,
                                 'squared_error': sq_error
-                            })
+                            }
+                            if raw_targets is not None:
+                                t_raw = float(raw_targets[group_idx, var_idx])
+                                p_raw = float(raw_predictions[group_idx, var_idx])
+                                row['target_raw'] = t_raw
+                                row['prediction_raw'] = p_raw
+                                row['absolute_error_raw'] = abs(p_raw - t_raw)
+                            writer.writerow(row)
 
             message = f"CSV saved: {csv_path}"
             if self.logger:
@@ -591,7 +616,8 @@ class Validator:
 
             # Write results
             self.results_writer.write_summary(results)
-            self.results_writer.write_csv(results['file_results'], self.target_variables)
+            self.results_writer.write_csv(results['file_results'], self.target_variables,
+                                          normalizer=self.normalizer)
 
             return results
 
