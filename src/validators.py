@@ -86,8 +86,14 @@ class MetricsAggregator:
                 'predictions': batch_result['predictions'][i]
             })
 
-    def get_summary(self) -> Dict[str, Any]:
+    def get_summary(self, normalizer=None) -> Dict[str, Any]:
         """Get summary statistics.
+
+        Args:
+            normalizer: Optional Normalizer. When provided, a `per_variable_raw`
+                entry is added with per-variable metrics computed in original
+                physical units (targets/predictions denormalized). The normalized
+                `per_variable` block is kept unchanged for provenance.
 
         Returns:
             Dictionary containing overall metrics and per-variable metrics.
@@ -118,16 +124,32 @@ class MetricsAggregator:
         all_targets = np.concatenate(self.all_targets, axis=0)
         all_predictions = np.concatenate(self.all_predictions, axis=0)
 
-        # Per-variable metrics
+        # Per-variable metrics (normalized / model space)
         per_variable = self._calculate_per_variable_metrics(all_targets, all_predictions)
 
-        return {
+        summary = {
             'overall': overall,
             'per_variable': per_variable,
             'file_results': self.file_results,
             'total_samples': len(self.file_results),
             'success_rate': 100.0  # Assuming all processed batches succeeded
         }
+
+        # Per-variable metrics in original physical units. R2/loss are NOT
+        # transform-invariant under log1p, so raw R2 != normalized R2; loss is a
+        # model-space quantity and is intentionally not denormalized.
+        if normalizer is not None:
+            raw_targets = np.asarray(all_targets, dtype=float).copy()
+            raw_predictions = np.asarray(all_predictions, dtype=float).copy()
+            for var_idx, var_name in enumerate(self.target_variables):
+                raw_targets[..., var_idx] = normalizer.denormalize_omni(
+                    raw_targets[..., var_idx], var_name)
+                raw_predictions[..., var_idx] = normalizer.denormalize_omni(
+                    raw_predictions[..., var_idx], var_name)
+            summary['per_variable_raw'] = self._calculate_per_variable_metrics(
+                raw_targets, raw_predictions)
+
+        return summary
 
     def _calculate_per_variable_metrics(
         self,
@@ -268,6 +290,24 @@ class ResultsWriter:
                     f.write(f"  MAPE:  {metrics['mape']:.2f}%\n")
                     f.write(f"  Bias:  {metrics['bias']:.4f}\n")
                     f.write("\n")
+
+                # Per-variable metrics in original physical units. R2 is not
+                # transform-invariant under log1p so it differs from the block
+                # above; loss stays a model-space quantity (Overall Metrics).
+                if results.get('per_variable_raw'):
+                    f.write("=" * 80 + "\n")
+                    f.write("METRICS BY VARIABLE (raw / original units)\n")
+                    f.write("=" * 80 + "\n\n")
+                    for var_name, metrics in results['per_variable_raw'].items():
+                        f.write(f"{var_name}:\n")
+                        f.write(f"  MAE:   {metrics['mae']:.4f}\n")
+                        f.write(f"  RMSE:  {metrics['rmse']:.4f}\n")
+                        f.write(f"  R2:    {metrics['r2_score']:.4f}\n")
+                        f.write(f"  Max Error: {metrics['max_error']:.4f}\n")
+                        f.write(f"  Median AE: {metrics['median_absolute_error']:.4f}\n")
+                        f.write(f"  MAPE:  {metrics['mape']:.2f}%\n")
+                        f.write(f"  Bias:  {metrics['bias']:.4f}\n")
+                        f.write("\n")
 
             message = f"Summary saved: {summary_path}"
             if self.logger:
@@ -596,7 +636,7 @@ class Validator:
 
         # Get summary
         try:
-            results = self.metrics_aggregator.get_summary()
+            results = self.metrics_aggregator.get_summary(normalizer=self.normalizer)
             results['failed_batches'] = failed_batches
             results['success_rate'] = ((len(dataloader) - failed_batches) / len(dataloader)) * 100
             results['output_directory'] = str(self.results_writer.output_dir)
