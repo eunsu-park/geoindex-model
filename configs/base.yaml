@@ -392,9 +392,16 @@ model:
 # =============================================================================
 training:
   # Loss functions
-  # Options: mse, mae, huber, weighted_mse, solar_wind_weighted
+  # Options: mse, mae, huber, weighted_mse, solar_wind_weighted, pinball
   regression_loss_type: "solar_wind_weighted"
   huber_delta: 10.0
+
+  # ---------------------------------------------------------------------------
+  # Pinball Settings (regression_loss_type='pinball')
+  # Asymmetric point loss: quantile > 0.5 penalizes under-prediction more.
+  # ---------------------------------------------------------------------------
+  pinball:
+    quantile: 0.75
 
   # Contrastive loss (only active when SDO modality is enabled)
   contrastive_loss_type: "consistency"

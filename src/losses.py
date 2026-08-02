@@ -960,6 +960,46 @@ class GradientBasedWeightLoss(nn.Module):
             return weighted_loss
 
 
+class PinballLoss(nn.Module):
+    """Pinball (quantile) loss for a single-quantile point forecast.
+
+    Unlike `QuantileLoss`, which expects a multi-quantile output channel, this works with
+    the single-channel output the regression models already emit. A quantile above 0.5
+    penalizes under-prediction more than over-prediction, so the fitted target moves from
+    the conditional mean/median toward the upper tail. Intended as a probe for the storm
+    under-prediction seen with symmetric losses.
+
+    Args:
+        quantile: Quantile level in (0, 1). 0.5 reproduces MAE.
+        reduction: 'mean', 'sum', or 'none'.
+    """
+
+    def __init__(self, quantile: float = 0.75, reduction: str = 'mean'):
+        super().__init__()
+        if not 0.0 < quantile < 1.0:
+            raise ValueError(f"quantile must be in (0, 1), got {quantile}")
+        self.quantile = float(quantile)
+        self.reduction = reduction
+
+    def forward(self, predictions: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        """Compute the pinball loss.
+
+        Args:
+            predictions: Predicted values.
+            targets: Ground-truth values (same shape as predictions).
+
+        Returns:
+            Reduced loss tensor.
+        """
+        errors = targets - predictions
+        loss = torch.maximum(self.quantile * errors, (self.quantile - 1.0) * errors)
+        if self.reduction == 'mean':
+            return loss.mean()
+        if self.reduction == 'sum':
+            return loss.sum()
+        return loss
+
+
 class QuantileLoss(nn.Module):
     """Quantile Loss with uncertainty-based weighting (Fifth Priority).
 
@@ -1277,6 +1317,10 @@ def create_loss_functions(config, stat_dict: Optional[dict] = None):
         )
         denorm_status = "enabled" if denormalize else "disabled"
         regression_loss_name = f"SolarWindWeighted({sw_cfg.weighting_mode}, denorm={denorm_status})"
+    elif regression_loss_type == "pinball":
+        quantile = float(getattr(getattr(config.training, 'pinball', {}), 'quantile', 0.75))
+        regression_criterion = PinballLoss(quantile=quantile, reduction='mean')
+        regression_loss_name = f"Pinball(q={quantile:g})"
     elif regression_loss_type == "none":
         # For two-stage training: Stage 1 uses only contrastive loss
         regression_criterion = None
