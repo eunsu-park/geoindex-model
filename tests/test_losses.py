@@ -14,6 +14,7 @@ from src.losses import (
     GeneralWeightedMSELoss,
     SolarWindWeightedLoss,
     LeadNormalizedLoss,
+    ExceedanceBCELoss,
 )
 
 
@@ -622,6 +623,55 @@ class TestLeadNormalizedLoss:
         loss.backward()
         assert torch.isfinite(loss)
         assert pred.grad is not None and torch.isfinite(pred.grad).all()
+
+
+class TestExceedanceBCELoss:
+    """Tests for the per-lead exceedance-probability loss."""
+
+    STATS = {"log1p_mean": 0.0, "log1p_std": 1.0}
+
+    def _normalized(self, raw):
+        """Normalized targets whose raw values are `raw` under log1p_zscore."""
+        return torch.log1p(torch.tensor(raw, dtype=torch.float32)).view(1, -1, 1)
+
+    def test_threshold_is_applied_in_raw_units(self):
+        """A target is an event by its raw value, not its normalized one."""
+        loss_fn = ExceedanceBCELoss(threshold=50.0, norm_stats=self.STATS, pos_weight=1.0)
+        target = self._normalized([10.0, 49.0, 51.0, 200.0])
+        confident = torch.tensor([-9.0, -9.0, 9.0, 9.0]).view(1, -1, 1)  # matches 0,0,1,1
+        wrong = -confident
+        assert loss_fn(confident, target).item() < 1e-3
+        assert loss_fn(wrong, target).item() > 5.0
+
+    def test_zscore_normalization_path(self):
+        loss_fn = ExceedanceBCELoss(threshold=50.0, norm_method="zscore",
+                                    norm_stats={"mean": 20.0, "std": 10.0}, pos_weight=1.0)
+        target = torch.tensor([0.0, 4.0]).view(1, -1, 1)     # raw 20 and 60
+        confident = torch.tensor([-9.0, 9.0]).view(1, -1, 1)
+        assert loss_fn(confident, target).item() < 1e-3
+
+    def test_rare_events_are_upweighted_by_default(self):
+        """With pos_weight=None the batch event rate sets the positive weight."""
+        raw = [1.0] * 99 + [200.0]                            # 1% events
+        target = self._normalized(raw)
+        logits = torch.zeros(1, len(raw), 1)                  # p = 0.5 everywhere
+        auto = ExceedanceBCELoss(threshold=50.0, norm_stats=self.STATS)(logits, target)
+        flat = ExceedanceBCELoss(threshold=50.0, norm_stats=self.STATS,
+                                 pos_weight=1.0)(logits, target)
+        assert auto.item() > flat.item()
+
+    def test_gradients_are_finite(self):
+        target = self._normalized([1.0, 10.0, 60.0, 150.0])
+        logits = torch.randn(1, 4, 1, requires_grad=True)
+        ExceedanceBCELoss(threshold=50.0, norm_stats=self.STATS)(logits, target).backward()
+        assert logits.grad is not None and torch.isfinite(logits.grad).all()
+
+    def test_all_quiet_batch_does_not_explode(self):
+        """A batch with no events must not produce an infinite positive weight."""
+        target = self._normalized([1.0, 2.0, 3.0, 4.0])
+        logits = torch.zeros(1, 4, 1)
+        value = ExceedanceBCELoss(threshold=50.0, norm_stats=self.STATS)(logits, target)
+        assert torch.isfinite(value)
 
 
 if __name__ == "__main__":

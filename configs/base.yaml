@@ -392,9 +392,21 @@ model:
 # =============================================================================
 training:
   # Loss functions
-  # Options: mse, mae, huber, weighted_mse, solar_wind_weighted, pinball, lead_normalized
+  # Options: mse, mae, huber, weighted_mse, solar_wind_weighted, pinball, lead_normalized,
+  #          exceedance_bce
   regression_loss_type: "solar_wind_weighted"
   huber_delta: 10.0
+
+  # ---------------------------------------------------------------------------
+  # Exceedance Settings (regression_loss_type='exceedance_bce')
+  # Reads the output as the log-odds that the index exceeds `threshold` at each
+  # lead. Such a run emits probabilities, so the regression metrics in
+  # validation_results.txt do not apply to it -- score it with the warning tools.
+  # pos_weight: null derives the positive-class weight from the batch event rate.
+  # ---------------------------------------------------------------------------
+  exceedance:
+    threshold: 50.0
+    pos_weight: null
 
   # ---------------------------------------------------------------------------
   # Lead-Normalized Settings (regression_loss_type='lead_normalized')

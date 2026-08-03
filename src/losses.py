@@ -960,6 +960,77 @@ class GradientBasedWeightLoss(nn.Module):
             return weighted_loss
 
 
+class ExceedanceBCELoss(nn.Module):
+    """Train the output as the log-odds that the index exceeds a threshold, per lead.
+
+    A conditional-mean forecast is damped by exactly the amount its correlation with truth
+    justifies, so thresholding it recovers events only after the threshold is refitted. That
+    works when the conditional law is homoscedastic, because then P(Y >= t | X) is monotone
+    in the mean. It is not: on the ap30 validation set the residual spread rises fivefold
+    from the lowest to the highest prediction decile, so no threshold on the mean is
+    Bayes-optimal and the exceedance probability has to be modelled directly.
+
+    The model is left untouched -- the same single output channel is read as a logit rather
+    than an index value, and the target is binarised at ``threshold`` in raw units. The
+    normalizer is required because the threshold is meaningful only in the original scale.
+
+    Note that a run trained this way emits probabilities, so the regression metrics in
+    ``validation_results.txt`` are meaningless for it. Score it with the warning tooling
+    (``calibrate_warning.py``, ``compare_loss_variants.py --categorical``), whose thresholds
+    are quantiles of the score and therefore scale-free.
+
+    Args:
+        threshold: Event level in raw index units.
+        norm_method: Target normalization ('log1p_zscore' or 'zscore'), so the threshold can
+            be compared in the original scale.
+        norm_stats: Statistics for that method, as carried in the stat file.
+        pos_weight: Weight on the positive class; None derives it per batch from the
+            observed event rate, which keeps the gradient balanced when events are rare.
+        reduction: 'mean' or 'sum'.
+    """
+
+    def __init__(self, threshold: float, norm_method: str = 'log1p_zscore',
+                 norm_stats: Optional[dict] = None, pos_weight: Optional[float] = None,
+                 reduction: str = 'mean'):
+        super().__init__()
+        self.threshold = float(threshold)
+        self.norm_method = norm_method
+        self.norm_stats = norm_stats or {}
+        self.pos_weight = pos_weight
+        self.reduction = reduction
+
+    def _raw(self, target: torch.Tensor) -> torch.Tensor:
+        """Undo the target normalization, mirroring SolarWindWeightedLoss."""
+        if self.norm_method == 'log1p_zscore':
+            mean = self.norm_stats.get('log1p_mean', 0.0)
+            std = self.norm_stats.get('log1p_std', 1.0)
+            return torch.expm1(target * std + mean)
+        if self.norm_method == 'zscore':
+            return target * self.norm_stats.get('std', 1.0) + self.norm_stats.get('mean', 0.0)
+        return target
+
+    def forward(self, predictions: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        """Binarise the target in raw units and score the output as a logit.
+
+        Args:
+            predictions: Logits of shape (batch, seq_len, feature_dim).
+            targets: Normalized targets of the same shape.
+
+        Returns:
+            Scalar binary cross-entropy.
+        """
+        label = (self._raw(targets) >= self.threshold).to(predictions.dtype)
+
+        if self.pos_weight is not None:
+            weight = torch.as_tensor(self.pos_weight, dtype=predictions.dtype,
+                                     device=predictions.device)
+        else:
+            rate = label.mean().clamp(1e-4, 1 - 1e-4)   # per-batch event rate
+            weight = (1.0 - rate) / rate
+        return F.binary_cross_entropy_with_logits(
+            predictions, label, pos_weight=weight, reduction=self.reduction)
+
+
 class LeadNormalizedLoss(nn.Module):
     """Per-element loss rescaled so every forecast lead contributes equally.
 
@@ -1391,6 +1462,27 @@ def create_loss_functions(config, stat_dict: Optional[dict] = None):
         )
         denorm_status = "enabled" if denormalize else "disabled"
         regression_loss_name = f"SolarWindWeighted({sw_cfg.weighting_mode}, denorm={denorm_status})"
+    elif regression_loss_type == "exceedance_bce":
+        ex_cfg = getattr(config.training, 'exceedance', None)
+        threshold = float(getattr(ex_cfg, 'threshold', 50.0)) if ex_cfg is not None else 50.0
+        pw = getattr(ex_cfg, 'pos_weight', None) if ex_cfg is not None else None
+        # The threshold is a raw-index quantity, so reuse the target's normalization.
+        use_csv = getattr(config.data.modalities, 'timeseries', False)
+        target_var = (list(config.data.timeseries.target_variables)[0] if use_csv
+                      else list(config.data.target_variables)[0])
+        norm_method = 'log1p_zscore'
+        if use_csv and hasattr(config.data.timeseries, 'normalization'):
+            methods = config.data.timeseries.normalization.methods
+            if hasattr(methods, target_var):
+                norm_method = getattr(methods, target_var)
+        norm_stats = (stat_dict or {}).get(target_var, {})
+        if not norm_stats:
+            print(f"Warning: no statistics for '{target_var}'; the exceedance threshold "
+                  f"cannot be applied in raw units.")
+        regression_criterion = ExceedanceBCELoss(
+            threshold=threshold, norm_method=norm_method, norm_stats=norm_stats,
+            pos_weight=None if pw is None else float(pw), reduction='mean')
+        regression_loss_name = f"ExceedanceBCE(>={threshold:g}, {norm_method})"
     elif regression_loss_type == "lead_normalized":
         ln_cfg = getattr(config.training, 'lead_normalized', None)
         base = getattr(ln_cfg, 'base_loss', 'mse') if ln_cfg is not None else 'mse'
