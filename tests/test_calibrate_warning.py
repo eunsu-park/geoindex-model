@@ -41,18 +41,32 @@ class TestFitThreshold:
     def test_budget_is_respected_on_the_fitting_data(self):
         score, label = noisy_scores()
         for budget in (0.2, 0.3, 0.5):
-            t = fit_threshold(score, label, budget)
-            assert contingency(score >= t, label)["far"] <= budget + 1e-9
+            fit = fit_threshold(score, label, budget)
+            assert fit["attained"]
+            assert contingency(score >= fit["threshold"], label)["far"] <= budget + 1e-9
 
     def test_lower_budget_gives_a_higher_threshold(self):
         score, label = noisy_scores()
-        assert fit_threshold(score, label, 0.2) >= fit_threshold(score, label, 0.5)
+        assert (fit_threshold(score, label, 0.2)["threshold"]
+                >= fit_threshold(score, label, 0.5)["threshold"])
 
     def test_hss_optimal_beats_the_raw_index_scale(self):
         """The point of the exercise: the index-scale threshold throws skill away."""
         score, label = noisy_scores()
-        t = fit_threshold(score, label, None)
+        t = fit_threshold(score, label, None)["threshold"]
         assert contingency(score >= t, label)["hss"] > contingency(score >= 50.0, label)["hss"]
+
+    def test_unattainable_budget_is_flagged_not_silently_met(self):
+        """A rare enough event has no threshold at a low false-alarm ratio; say so."""
+        rng = np.random.default_rng(3)
+        n = 20000
+        label = rng.random(n) < 0.004              # very rare
+        score = rng.normal(8, 4, n) + label * 3.0  # and barely separated
+        fit = fit_threshold(score, label, 0.05)
+        assert fit["attained"] is False
+        assert fit["fit_far"] > 0.05
+        # the fallback is still the strictest threshold on the grid, not a silent pass
+        assert contingency(score >= fit["threshold"], label)["far"] > 0.05
 
 
 class TestIsotonic:

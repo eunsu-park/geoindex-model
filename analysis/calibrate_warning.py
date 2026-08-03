@@ -87,12 +87,24 @@ def contingency(pred_yes: np.ndarray, obs_yes: np.ndarray) -> dict:
             "hss": 2 * (a * d - b * c) / den if den else 0.0}
 
 
-def fit_threshold(score: np.ndarray, label: np.ndarray, budget: float | None) -> float:
+def fit_threshold(score: np.ndarray, label: np.ndarray, budget: float | None) -> dict:
     """Lowest threshold whose false-alarm ratio stays within ``budget``.
 
     Thresholds are taken as quantiles of the training scores rather than a fixed grid in ap
     units, so the same routine works whatever scale the score is on. With ``budget=None``
     the HSS-maximising threshold is returned instead.
+
+    The grid is deliberately denser above the 99th percentile. For a rare event only a
+    handful of candidates clear a tight budget at all, and an evenly spaced quantile grid
+    steps too coarsely through the tail to find the lowest of them: at the G3 level
+    (ap >= 100, 1.8% base rate) a 0.002-spaced grid returned the same threshold for the 20%
+    and 30% budgets, and the finer grid finds 102.90 rather than 112.32 for the latter,
+    lifting held-out POD from 0.066 to 0.091.
+
+    A budget can still be genuinely unattainable, when no threshold reaches it at any
+    detection rate. In that case the strictest threshold on the grid is returned with
+    ``attained`` False and the false-alarm ratio it actually achieves, so the caller can say
+    so rather than present the fallback as if it had met the budget.
 
     Args:
         score: Training-split scores.
@@ -100,13 +112,19 @@ def fit_threshold(score: np.ndarray, label: np.ndarray, budget: float | None) ->
         budget: Maximum acceptable false-alarm ratio, or None for HSS-optimal.
 
     Returns:
-        The chosen threshold.
+        Dict with threshold, attained (always True when budget is None) and fit_far, the
+        false-alarm ratio the threshold achieves on the fitting split.
     """
-    grid = np.quantile(score, np.arange(0.50, 0.999, 0.002))
+    grid = np.unique(np.quantile(score, np.concatenate([
+        np.arange(0.50, 0.99, 0.002), np.arange(0.99, 0.99999, 0.00005)])))
     if budget is None:
-        return float(max(grid, key=lambda t: contingency(score >= t, label)["hss"]))
+        best = float(max(grid, key=lambda t: contingency(score >= t, label)["hss"]))
+        return {"threshold": best, "attained": True,
+                "fit_far": contingency(score >= best, label)["far"]}
     ok = [t for t in grid if contingency(score >= t, label)["far"] <= budget]
-    return float(min(ok)) if ok else float(grid[-1])
+    chosen = float(min(ok)) if ok else float(grid[-1])
+    return {"threshold": chosen, "attained": bool(ok),
+            "fit_far": contingency(score >= chosen, label)["far"]}
 
 
 def isotonic_fit(score: np.ndarray, label: np.ndarray) -> tuple:
@@ -177,20 +195,28 @@ def main() -> None:
     print(f"event rate       fit {100*label[tr].mean():.1f}%  held out {100*label[te].mean():.1f}%")
     print(f"AUC (all)        {auc(score, label):.3f}   rapid-rise events held out: {int(onset[te].sum())}")
 
-    print(f"\n{'decision rule':34s} {'thr':>7s} {'POD':>6s} {'FAR':>6s} {'BIAS':>6s} {'HSS':>6s} {'rise POD':>9s}")
+    print(f"\n{'decision rule':34s} {'thr':>7s} {'POD':>6s} {'FAR':>6s} {'BIAS':>6s} {'HSS':>6s} "
+          f"{'rise POD':>9s}")
 
-    def row(label_text, thr):
+    def row(label_text, thr, attained=True, fit_far=None):
         c = contingency(score[te] >= thr, label[te])
         rise = float((score[te][onset[te]] >= thr).mean()) if onset[te].sum() else float("nan")
+        flag = "" if attained else f"   <- budget unattainable (best {fit_far:.0%} on fit)"
         print(f"{label_text:34s} {thr:7.2f} {c['pod']:6.3f} {c['far']:6.3f} {c['bias']:6.3f} "
-              f"{c['hss']:6.3f} {rise:9.3f}")
-        return {"threshold": thr, **c, "rise_pod": rise}
+              f"{c['hss']:6.3f} {rise:9.3f}{flag}")
+        return {"threshold": thr, "attained": attained, **c, "rise_pod": rise}
 
     rows = {"raw": row(f"raw scale (score >= {args.event_threshold:g})", args.event_threshold)}
-    rows["hss_optimal"] = row("HSS-optimal", fit_threshold(score[tr], label[tr], None))
+    fit = fit_threshold(score[tr], label[tr], None)
+    rows["hss_optimal"] = row("HSS-optimal", fit["threshold"])
     for budget in FAR_BUDGETS:
-        rows[f"far_{budget:g}"] = row(f"false-alarm budget <= {budget:.0%}",
-                                      fit_threshold(score[tr], label[tr], budget))
+        fit = fit_threshold(score[tr], label[tr], budget)
+        rows[f"far_{budget:g}"] = row(f"false-alarm budget <= {budget:.0%}", fit["threshold"],
+                                      fit["attained"], fit["fit_far"])
+    if any(not v["attained"] for v in rows.values()):
+        print("\nAn unattainable budget means no threshold reaches that false-alarm ratio at any\n"
+              "detection rate — the event is too rare for the sharpness available. Those rows show\n"
+              "the strictest threshold on the grid, not a rule that meets the budget.")
 
     knot_x, knot_y = isotonic_fit(score[tr], label[tr])
     prob = isotonic_apply(knot_x, knot_y, score[te])
@@ -217,6 +243,7 @@ def main() -> None:
             "fit": {"anchors": cut, "first": data["anchor"][0], "last": data["anchor"][cut - 1],
                     "event_rate": float(label[tr].mean())},
             "thresholds": {k: v["threshold"] for k, v in rows.items()},
+            "budget_attained": {k: v["attained"] for k, v in rows.items()},
             "held_out": {k: {m: v[m] for m in ("pod", "far", "bias", "hss", "rise_pod")}
                          for k, v in rows.items()},
             "isotonic": {"score": [float(v) for v in knot_x[keep]],
