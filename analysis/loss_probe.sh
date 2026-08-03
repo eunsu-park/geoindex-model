@@ -46,8 +46,13 @@ TARGET="${CONFIG_NAME##*_}"
 TVAR="${TARGET}30"
 
 # Input list without the autoregressive target channel (variant: no_target_channel).
+# The list override replaces outright, but a dict override MERGES into the existing node --
+# passing the seven solar-wind groups would leave the ap30 group in place and trip
+# build_gnn_node_groups ("GNN group 'ap30' contains variable 'ap30' not found in
+# input_variables"). Delete that one key instead. Tilde expansion does not apply to the
+# result of a variable expansion, so the ~ survives unquoted.
 SW_VARS="[v_avg,v_min,v_max,np_avg,np_min,np_max,t_avg,t_min,t_max,bx_avg,bx_min,bx_max,by_avg,by_min,by_max,bz_avg,bz_min,bz_max,bt_avg,bt_min,bt_max]"
-SW_GROUPS="{v:[v_avg,v_min,v_max],np:[np_avg,np_min,np_max],t:[t_avg,t_min,t_max],bx:[bx_avg,bx_min,bx_max],by:[by_avg,by_min,by_max],bz:[bz_avg,bz_min,bz_max],bt:[bt_avg,bt_min,bt_max]}"
+SW_DROP_GROUP="~data.timeseries.gnn_variable_groups.${TVAR}"
 
 ORDER="baseline mse mae sww_l1 sww_strong pinball_q75 pinball_q90 target_zscore no_target_channel"
 
@@ -69,7 +74,7 @@ variant_overrides() {
         # drop the log1p compression from the target transform (stats pkl already carries mean/std)
         target_zscore) echo "data.timeseries.normalization.methods.${TVAR}=zscore" ;;
         # not a loss variant: the masking ablation showed the target channel hurts 12h-input models
-        no_target_channel) echo "data.timeseries.input_variables=${SW_VARS} data.timeseries.gnn_variable_groups=${SW_GROUPS}" ;;
+        no_target_channel) echo "data.timeseries.input_variables=${SW_VARS} ${SW_DROP_GROUP}" ;;
         *) return 1 ;;
     esac
 }
@@ -99,17 +104,25 @@ run_one() {
         return
     fi
 
+    # errexit is suspended inside an `if` condition, so fail explicitly: a failed train
+    # would otherwise fall through to a validate with no checkpoint.
     # shellcheck disable=SC2086
     python scripts/train.py --config-name="$CONFIG_NAME" +io="$IO" +model="$MODEL" \
-        experiment.name="$exp" $extra
+        experiment.name="$exp" $extra || return 1
     # shellcheck disable=SC2086
     python scripts/validate.py --config-name="$CONFIG_NAME" +io="$IO" +model="$MODEL" \
-        experiment.name="$exp" validation.epoch=best validation.mcd_samples=0 $extra
+        experiment.name="$exp" validation.epoch=best validation.mcd_samples=0 $extra || return 1
 }
 
+# One variant failing must not abandon the rest of the sweep.
+FAILED=""
 for v in $ORDER; do
-    run_one "$v"
+    if ! run_one "$v"; then
+        echo "!!! variant '$v' FAILED -- continuing"
+        FAILED="$FAILED $v"
+    fi
 done
+[[ -n "$FAILED" ]] && echo "Failed variants:$FAILED"
 
 echo
 echo "Done. Compare with:"
