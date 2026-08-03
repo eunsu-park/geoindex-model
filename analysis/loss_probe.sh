@@ -54,13 +54,27 @@ TVAR="${TARGET}30"
 SW_VARS="[v_avg,v_min,v_max,np_avg,np_min,np_max,t_avg,t_min,t_max,bx_avg,bx_min,bx_max,by_avg,by_min,by_max,bz_avg,bz_min,bz_max,bt_avg,bt_min,bt_max]"
 SW_DROP_GROUP="~data.timeseries.gnn_variable_groups.${TVAR}"
 
-ORDER="baseline mse mae sww_l1 sww_strong pinball_q75 pinball_q90 target_zscore no_target_channel"
+ORDER="baseline notemporal temporal_rev tier_off patience25 mse mae sww_l1 sww_strong pinball_q75 pinball_q90 target_zscore no_target_channel"
 
 # variant name -> extra Hydra overrides (case, not an associative array: bash 3.2 compat)
 variant_overrides() {
     case "$1" in
         # control: what every current run used
         baseline)     echo "" ;;
+        # --- loss/optimization surgery -------------------------------------------------
+        # The temporal weight is linspace(0.5, 1.0) over the horizon, so the LEAST
+        # predictable leads carry twice the weight of the most predictable ones; combined
+        # with the tier weights the span is 16:1 in favour of (long lead x storm), the
+        # cells where a constant beats the model. These four separate the culprits.
+        # tier ON, temporal OFF
+        notemporal)   echo "training.solar_wind_weighted.combine_temporal=false" ;;
+        # tier ON, temporal reversed (emphasise the predictable short leads)
+        temporal_rev) echo "training.solar_wind_weighted.temporal_weight_range=[1.0,0.5]" ;;
+        # tier OFF, temporal ON -- threshold mode with high_weight=1.0 makes every ap
+        # weight 1.0, neutralising the tiers while the temporal factor still applies
+        tier_off)     echo "training.solar_wind_weighted.weighting_mode=threshold training.solar_wind_weighted.high_weight=1.0" ;;
+        # every run so far early-stopped at epoch 14-15 (patience 10 -> best epoch ~5 of 100)
+        patience25)   echo "training.early_stopping_patience=25" ;;
         # symmetric losses without the NOAA tier weighting -- isolates the weighting's contribution
         mse)          echo "training.regression_loss_type=mse" ;;
         mae)          echo "training.regression_loss_type=mae" ;;

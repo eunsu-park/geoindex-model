@@ -11,9 +11,14 @@ The persistence anchor is the last observed target value in the input window. Va
 drop the target input channel have no anchor of their own, so the anchor series is taken from
 whichever variant still carries it and matched by anchor timestamp.
 
+With ``--ridge`` a reference row is added: a plain per-lead ridge regression on the same
+input window, fitted on the same training index and scored on the same anchors. It is the
+line a trained model has to clear -- a variant that only wins on MAE while falling behind
+ridge on skill@l1 / std_r / tail reproduction has bought its MAE by damping the forecast.
+
 Usage:
     python analysis/compare_loss_variants.py --results-dir /path/to/results \
-        --prefix probe_ap_in12h_out12h_gnn_transformer
+        --prefix probe_ap_in12h_out12h_gnn_transformer --ridge
 """
 
 from __future__ import annotations
@@ -51,7 +56,9 @@ def load_variant(zip_path: str) -> dict:
             pers.append(np.asarray(d["inputs"])[-1, ivars.index(tvar)] if tvar in ivars else np.nan)
     pers_arr = np.asarray(pers)
     return {"anchor": np.asarray(anchors), "true": np.asarray(true),
-            "pred": np.asarray(pred), "pers": None if np.isnan(pers_arr).all() else pers_arr}
+            "pred": np.asarray(pred), "pers": None if np.isnan(pers_arr).all() else pers_arr,
+            "input_variables": ivars, "target_variable": tvar,
+            "n_in": int(np.asarray(d["inputs"]).shape[0])}
 
 
 def summarize(name: str, v: dict, pers_map: dict) -> dict:
@@ -78,11 +85,107 @@ def summarize(name: str, v: dict, pers_map: dict) -> dict:
     return row
 
 
+def _windows(frame, anchors, columns, n_in, n_out, target):
+    """Build (input window, target window) pairs at the given anchor timestamps.
+
+    Follows the dataset's half-open convention (``input_start=-N, input_end=0,
+    target_start=0``): the input window is rows ``[i-n_in, i)`` -- it ends one step BEFORE
+    the anchor row -- and the target window is rows ``[i, i+n_out)``, starting AT the anchor
+    row. Including row ``i`` in the input would leak the lead-1 target.
+
+    Args:
+        frame: Source dataframe indexed by datetime, 30-min cadence.
+        anchors: Anchor timestamps (pandas DatetimeIndex or Series).
+        columns: Input variable names, in model order.
+        n_in: Input window length in steps.
+        n_out: Number of forecast steps.
+        target: Target column name.
+
+    Returns:
+        (X, Y) arrays of shape (n, n_in, n_vars) and (n, n_out).
+    """
+    pos = {t: i for i, t in enumerate(frame.index)}
+    values = frame[columns].to_numpy(float)
+    tgt = frame[target].to_numpy(float)
+    X, Y = [], []
+    for t in anchors:
+        i = pos.get(t)
+        if i is None or i - n_in < 0 or i + n_out > len(values):
+            continue
+        w, y = values[i - n_in:i], tgt[i:i + n_out]
+        if np.isfinite(w).all() and np.isfinite(y).all():
+            X.append(w)
+            Y.append(y)
+    return np.asarray(X), np.asarray(Y)
+
+
+def ridge_reference(sample: dict, anchors, datasets_root: str, parquet: str,
+                    train_index: str, alpha: float) -> np.ndarray:
+    """Fit one ridge per lead on the training index and predict at ``anchors``.
+
+    Features are the flattened input window; columns that are non-negative throughout the
+    training data get a log1p compression first, then everything is standardised. The
+    target is fitted in log1p space and mapped back with expm1, matching how the models
+    normalise ``ap30``/``hp30``.
+
+    Args:
+        sample: One loaded variant, used only for the window geometry and variable names.
+        anchors: Anchor timestamps to predict at, in the loaded runs' order.
+        datasets_root: Directory holding the parquet and the index CSVs.
+        parquet: Parquet filename relative to ``datasets_root``.
+        train_index: Training index CSV relative to ``datasets_root``.
+        alpha: Ridge penalty.
+
+    Returns:
+        Predictions of shape (len(anchors), n_out); rows with an unusable window are NaN.
+    """
+    import pandas as pd
+
+    frame = pd.read_parquet(os.path.join(datasets_root, parquet))
+    frame = frame.set_index("datetime").sort_index()
+    tr = pd.read_csv(os.path.join(datasets_root, train_index), parse_dates=["datetime"])
+
+    cols, target = sample["input_variables"], sample["target_variable"]
+    n_in, n_out = sample["n_in"], sample["true"].shape[1]
+    Xtr, Ytr = _windows(frame, tr.datetime, cols, n_in, n_out, target)
+    ts = pd.to_datetime(anchors, format="%Y%m%d%H%M%S")
+    Xte, _ = _windows(frame, ts, cols, n_in, n_out, target)
+    if len(Xtr) == 0 or len(Xte) != len(anchors):
+        raise SystemExit(f"ridge: window build failed (train {len(Xtr)}, "
+                         f"test {len(Xte)} vs {len(anchors)} anchors)")
+
+    logmask = Xtr.reshape(-1, Xtr.shape[-1]).min(axis=0) >= 0.0  # sign-free columns only
+    def feats(X, mu=None, sd=None):
+        Z = X.copy()
+        Z[:, :, logmask] = np.log1p(np.clip(Z[:, :, logmask], 0, None))
+        F = np.nan_to_num(Z.reshape(len(X), -1))
+        if mu is None:
+            mu, sd = F.mean(0), F.std(0) + 1e-8
+        return (F - mu) / sd, mu, sd
+
+    Ftr, mu, sd = feats(Xtr)
+    Fte, _, _ = feats(Xte, mu, sd)
+    Ltr = np.log1p(np.clip(Ytr, 0, None))
+    out = np.empty((len(Fte), n_out))
+    for j in range(n_out):
+        xm, ym = Ftr.mean(0), Ltr[:, j].mean()
+        Xc = Ftr - xm
+        w = np.linalg.solve(Xc.T @ Xc + alpha * np.eye(Xc.shape[1]), Xc.T @ (Ltr[:, j] - ym))
+        out[:, j] = np.clip(np.expm1((Fte - xm) @ w + ym), 0, None)
+    return out
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Compare loss-probe variants")
     ap.add_argument("--results-dir", required=True)
     ap.add_argument("--prefix", required=True, help="e.g. probe_ap_in12h_out12h_gnn_transformer")
     ap.add_argument("--epoch", default="best")
+    ap.add_argument("--ridge", action="store_true",
+                    help="add a per-lead ridge regression reference row")
+    ap.add_argument("--datasets-root", default=os.path.expanduser("~/Projects/GeoIndex/datasets"))
+    ap.add_argument("--parquet", default="data.parquet")
+    ap.add_argument("--train-index", default="total_ap/train_index.csv")
+    ap.add_argument("--ridge-alpha", type=float, default=100.0)
     args = ap.parse_args()
 
     paths = sorted(glob.glob(os.path.join(
@@ -103,6 +206,14 @@ def main() -> None:
             break
 
     rows = [summarize(name, v, pers_map) for name, v in loaded.items()]
+
+    if args.ridge:
+        sample = next(iter(loaded.values()))
+        pred = ridge_reference(sample, sample["anchor"], args.datasets_root,
+                               args.parquet, args.train_index, args.ridge_alpha)
+        rows.append(summarize("RIDGE (reference)",
+                              {**sample, "pred": pred}, pers_map))
+
     rows.sort(key=lambda r: -r["skill"])
 
     print(f"\n{'variant':20s} {'MAE':>7s} {'skill':>7s} {'skill@l1':>9s} {'bias':>7s} "
