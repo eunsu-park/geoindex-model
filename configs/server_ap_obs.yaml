@@ -19,6 +19,7 @@
 #
 # Prereq on the server:
 #   /home/eunsupark/Projects/GeoIndex/datasets/data_obs.parquet   (cloud-synced from the Mac)
+#   /home/eunsupark/Projects/GeoIndex/datasets/cv5_ap_obs/fold{1..5}/{train,validation}_index.csv
 #
 # Run:
 #   python scripts/train.py --config-name=server_ap_obs +io=in12h_out12h +model=gnn_transformer \
@@ -29,6 +30,11 @@
 defaults:
   - server_ap
   - _self_
+
+# CV fold index directory. Must NOT be cv5_ap: those folds already hold table_stats.pkl from
+# the bow-shock runs, and compute_statistics_table loads a cache when it finds one -- the obs
+# folds would silently normalize with bow-shock statistics.
+cv_dir: "cv5_ap_obs"
 
 data:
   timeseries:
