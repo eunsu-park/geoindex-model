@@ -1,0 +1,38 @@
+# Server configuration for ap30 trained in L1 OBSERVATION time rather than bow-shock time.
+#
+# OMNI HRO is time-shifted from the monitoring spacecraft to the bow shock nose, so a row
+# stamped t is wind that has already arrived and the model gets no head start. The monitor saw
+# that wind timeshift_sec earlier -- a median of 50 min -- and NOAA RTSW, which the realtime
+# service consumes, timestamps in observation time anyway. Training in bow-shock time
+# therefore both discards a real interval and fits on a different clock from the one served.
+#
+# `analysis/make_observation_time_table.py` re-indexes the 21 wind columns onto the observing
+# spacecraft's clock and leaves ap30/hp30 (ground indices, measured at real time) alone.
+# Measured with a ridge on the same features, held out on 2022-2025:
+#
+#   bow-shock time (data.parquet)       peak rho 0.705   AUC 0.8574   reproduction 0.561
+#   observation time (data_obs.parquet) peak rho 0.724   AUC 0.8678   reproduction 0.577
+#   upper bound (+1 h of true wind)     peak rho 0.729   AUC 0.8675   reproduction 0.588
+#
+# AUC is the number to watch. Every other intervention in this investigation moved calibration
+# and left AUC inside +/-0.001; this one moves discrimination.
+#
+# Prereq on the server:
+#   /home/eunsupark/Projects/GeoIndex/datasets/data_obs.parquet   (cloud-synced from the Mac)
+#
+# Run:
+#   python scripts/train.py --config-name=server_ap_obs +io=in12h_out12h +model=gnn_transformer \
+#       experiment.name=probe_ap_in12h_out12h_gnn_transformer_obs
+#
+# Compare against probe_..._baseline, which is the same run on bow-shock time.
+
+defaults:
+  - server_ap
+  - _self_
+
+data:
+  timeseries:
+    table_file: "data_obs.parquet"
+    # Must not share the bow-shock cache: the normalization statistics are computed from the
+    # table's own columns, and whichever run wrote last would otherwise define them for both.
+    stat_file: "table_stats_ap_obs.pkl"
