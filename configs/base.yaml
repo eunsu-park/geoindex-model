@@ -410,6 +410,21 @@ training:
     soft_tau: 0.0
 
   # ---------------------------------------------------------------------------
+  # Peak Head (independent of regression_loss_type)
+  # Adds a second output head predicting the window maximum as its own scalar,
+  # trained with its own loss on top of the per-lead loss. This is the corrected
+  # form of `peak_augmented`: deriving the peak from the same 24 curve outputs
+  # let the model satisfy the term by turning one output step into a maximum
+  # register (99.7 % of anchors peaked at exactly 11.0 h) instead of learning a
+  # taller storm. A separate scalar keeps the curve scored only as a curve.
+  # Only the gnn architectures carry this head; the others raise at build time.
+  # ---------------------------------------------------------------------------
+  peak_head:
+    enabled: false
+    base_loss: "mse"
+    weight: 1.0
+
+  # ---------------------------------------------------------------------------
   # Exceedance Settings (regression_loss_type='exceedance_bce')
   # Reads the output as the log-odds that the index exceeds `threshold` at each
   # lead. Such a run emits probabilities, so the regression metrics in

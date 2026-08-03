@@ -1026,6 +1026,58 @@ class PeakAugmentedLoss(nn.Module):
         return curve + self.weight * peak
 
 
+class PeakHeadLoss(nn.Module):
+    """Score a scalar peak prediction against the maximum of the observed window.
+
+    This is the auxiliary term for a model with a dedicated peak head. It differs from
+    ``PeakAugmentedLoss`` in where the prediction comes from, and that difference is the whole
+    point. PeakAugmentedLoss derives the peak from the same 24 curve outputs, which leaves the
+    model free to satisfy the term by nominating one output step as a maximum register -- and
+    the trained model did exactly that, placing its maximum at 11.0 h for 99.7 % of anchors
+    while flattening the other twenty-three leads. Here the prediction is a separate scalar, so
+    the curve is never asked to carry the peak and is scored only as a curve.
+
+    Only the target is reduced: ``targets.amax(dim=1)`` is the observed block maximum. The
+    target normalization is monotone, so the maximum in normalized space is the maximum in raw
+    units.
+
+    Args:
+        base_loss_type: Element-wise loss ('mse', 'mae', 'huber').
+        huber_delta: Beta of the smooth L1 loss when ``base_loss_type='huber'``.
+        reduction: 'mean' or 'sum' over the batch.
+    """
+
+    def __init__(self, base_loss_type: str = 'mse', huber_delta: float = 10.0,
+                 reduction: str = 'mean'):
+        super().__init__()
+        self.base_loss_type = base_loss_type.lower()
+        self.huber_delta = float(huber_delta)
+        self.reduction = reduction
+
+    def forward(self, peak_pred: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        """Compute the peak loss.
+
+        Args:
+            peak_pred: Predicted window maximum of shape (batch, feature_dim) -- or
+                (batch, 1, feature_dim), which is squeezed.
+            targets: Full target curve of shape (batch, seq_len, feature_dim).
+
+        Returns:
+            Scalar loss.
+        """
+        if peak_pred.dim() == 3:
+            peak_pred = peak_pred.squeeze(1)
+        target_peak = targets.amax(dim=1)
+        if self.base_loss_type == 'mae':
+            loss = torch.abs(peak_pred - target_peak)
+        elif self.base_loss_type == 'huber':
+            loss = F.smooth_l1_loss(peak_pred, target_peak, beta=self.huber_delta,
+                                    reduction='none')
+        else:
+            loss = (peak_pred - target_peak) ** 2
+        return loss.sum() if self.reduction == 'sum' else loss.mean()
+
+
 class ExceedanceBCELoss(nn.Module):
     """Train the output as the log-odds that the index exceeds a threshold, per lead.
 
@@ -1597,6 +1649,40 @@ def create_loss_functions(config, stat_dict: Optional[dict] = None):
     print(f"Losses: Regression={regression_loss_name}, Contrastive={contrastive_loss_name}")
 
     return regression_criterion, contrastive_criterion
+
+
+def create_peak_criterion(config):
+    """Build the auxiliary peak-head criterion, or None when the head is disabled.
+
+    Kept out of ``create_loss_functions`` so its two-value return stays as it is -- every
+    caller unpacks exactly two names.
+
+    Args:
+        config: Hydra config; reads ``training.peak_head``.
+
+    Returns:
+        Tuple of (criterion or None, weight). The weight is meaningless when the criterion is
+        None and is returned as 0.0 in that case.
+
+    Raises:
+        ValueError: If the head is enabled for an architecture that does not build one. Only
+            the gnn family carries it; without this the failure would surface as an unexpected
+            keyword argument deep in the forward pass.
+    """
+    cfg = getattr(config.training, 'peak_head', None)
+    if cfg is None or not getattr(cfg, 'enabled', False):
+        return None, 0.0
+    model_type = getattr(config.model, 'model_type', None)
+    if model_type != 'gnn':
+        raise ValueError(
+            f"training.peak_head.enabled=true but model_type='{model_type}' does not build a "
+            f"peak head; only the gnn architectures do. Either use a gnn model or disable it."
+        )
+    base = getattr(cfg, 'base_loss', 'mse')
+    weight = float(getattr(cfg, 'weight', 1.0))
+    criterion = PeakHeadLoss(base_loss_type=base, huber_delta=config.training.huber_delta)
+    print(f"Peak head: PeakHead({base}), weight={weight:g}")
+    return criterion, weight
 
 
 # =============================================================================

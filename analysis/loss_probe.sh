@@ -54,7 +54,7 @@ TVAR="${TARGET}30"
 SW_VARS="[v_avg,v_min,v_max,np_avg,np_min,np_max,t_avg,t_min,t_max,bx_avg,bx_min,bx_max,by_avg,by_min,by_max,bz_avg,bz_min,bz_max,bt_avg,bt_min,bt_max]"
 SW_DROP_GROUP="~data.timeseries.gnn_variable_groups.${TVAR}"
 
-ORDER="baseline peak1 peak05 peak_soft peak_mae notemporal temporal_rev tier_off patience25 leadnorm leadnorm_mae exceed50 exceed30 mse mae sww_l1 sww_strong pinball_q75 pinball_q90 target_zscore no_target_channel"
+ORDER="baseline peakhead1 peakhead05 peakhead_mae peak1 peak05 peak_soft peak_mae notemporal temporal_rev tier_off patience25 leadnorm leadnorm_mae exceed50 exceed30 mse mae sww_l1 sww_strong pinball_q75 pinball_q90 target_zscore no_target_channel"
 
 # variant name -> extra Hydra overrides (case, not an associative array: bash 3.2 compat)
 variant_overrides() {
@@ -84,7 +84,16 @@ variant_overrides() {
         # twice. Fitting the block maximum as its own quantity raises the correlation with the
         # observed 12-h peak from 0.572 to 0.686 and tail reproduction from 0.411 to 0.569 in a
         # ridge on the same inputs, at an unchanged dispersion-to-rho ratio -- discrimination,
-        # not inflation. These add that supervision to the existing outputs.
+        # not inflation. These add that supervision to the existing outputs -- and that turned
+        # out to be the flaw: with no timing information in the peak term, the model satisfied
+        # it by making output step 21 a maximum register (99.7 % of anchors peak at 11.0 h)
+        # and flattening the rest. Superseded by peakhead*; kept for reproducibility.
+        # The corrected form: a separate scalar head, so the peak term never reaches the 24
+        # curve outputs and cannot be satisfied by spiking one of them. The peak* variants
+        # below are kept because they are what motivated this, not because they are usable.
+        peakhead1)    echo "training.peak_head.enabled=true training.peak_head.weight=1.0" ;;
+        peakhead05)   echo "training.peak_head.enabled=true training.peak_head.weight=0.5" ;;
+        peakhead_mae) echo "training.peak_head.enabled=true training.peak_head.weight=1.0 training.peak_head.base_loss=mae" ;;
         peak1)        echo "training.regression_loss_type=peak_augmented training.peak.weight=1.0" ;;
         peak05)       echo "training.regression_loss_type=peak_augmented training.peak.weight=0.5" ;;
         peak_soft)    echo "training.regression_loss_type=peak_augmented training.peak.weight=1.0 training.peak.soft_tau=0.5" ;;

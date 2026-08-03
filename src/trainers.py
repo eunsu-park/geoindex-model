@@ -32,6 +32,7 @@ import torch.nn.functional as F
 import numpy as np
 import matplotlib.pyplot as plt
 
+from .losses import create_peak_criterion
 from .plotting import plot_prediction_timeseries, denormalize_arrays
 
 
@@ -316,6 +317,9 @@ class Trainer:
         self.scheduler = scheduler
         self.criterion = criterion
         self.contrastive_criterion = contrastive_criterion
+        # Auxiliary head scoring the window maximum as its own scalar; None when disabled,
+        # which is the default and leaves every code path below unchanged.
+        self.peak_criterion, self.lambda_peak = create_peak_criterion(config)
         self.device = device
         self.logger = logger
 
@@ -551,6 +555,7 @@ class Trainer:
             self.optimizer.zero_grad()
 
         # Forward pass depends on model type
+        peak_out = None
         if self.model_type == "fusion":
             # Full multimodal model with feature extraction
             outputs, transformer_features, convlstm_features = self.model(
@@ -572,7 +577,11 @@ class Trainer:
         elif self.model_type in ("transformer", "linear", "tcn", "convlstm",
                                    "gnn", "timesnet", "patchtst",
                                    "lstm", "bilstm"):
-            outputs = self.model(inputs, sdo, return_features=False)
+            if self.peak_criterion is not None:
+                outputs, peak_out = self.model(inputs, sdo, return_features=False,
+                                               return_peak=True)
+            else:
+                outputs = self.model(inputs, sdo, return_features=False)
             cont_loss = torch.tensor(0.0, device=self.device)
             cosine_sim = 0.0
         else:
@@ -589,6 +598,9 @@ class Trainer:
             # Two-stage training: Stage 1 uses only contrastive loss
             reg_loss = torch.tensor(0.0, device=self.device)
             total_loss = cont_loss
+
+        if peak_out is not None:
+            total_loss = total_loss + self.lambda_peak * self.peak_criterion(peak_out, targets)
 
         # Backward pass with gradient accumulation
         # Divide loss by accumulation steps to scale the gradient
@@ -653,6 +665,7 @@ class Trainer:
         targets = data_dict["targets"].to(self.device)
 
         # Forward pass depends on model type
+        peak_out = None
         if self.model_type == "fusion":
             outputs, transformer_features, convlstm_features = self.model(
                 inputs, sdo, return_features=True
@@ -672,7 +685,11 @@ class Trainer:
         elif self.model_type in ("transformer", "linear", "tcn", "convlstm",
                                    "gnn", "timesnet", "patchtst",
                                    "lstm", "bilstm"):
-            outputs = self.model(inputs, sdo, return_features=False)
+            if self.peak_criterion is not None:
+                outputs, peak_out = self.model(inputs, sdo, return_features=False,
+                                               return_peak=True)
+            else:
+                outputs = self.model(inputs, sdo, return_features=False)
             cont_loss = torch.tensor(0.0, device=self.device)
             cosine_sim = 0.0
         else:
@@ -689,6 +706,9 @@ class Trainer:
             # Two-stage training: Stage 1 uses only contrastive loss
             reg_loss = torch.tensor(0.0, device=self.device)
             total_loss = cont_loss
+
+        if peak_out is not None:
+            total_loss = total_loss + self.lambda_peak * self.peak_criterion(peak_out, targets)
 
         # Calculate metrics
         mae = F.l1_loss(outputs, targets).item()

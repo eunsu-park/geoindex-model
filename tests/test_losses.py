@@ -16,6 +16,7 @@ from src.losses import (
     LeadNormalizedLoss,
     ExceedanceBCELoss,
     PeakAugmentedLoss,
+    PeakHeadLoss,
 )
 
 
@@ -737,6 +738,58 @@ class TestPeakAugmentedLoss:
         loss.backward()
         assert torch.isfinite(loss)
         assert pred.grad is not None and torch.isfinite(pred.grad).all()
+
+
+class TestPeakHeadLoss:
+    """Tests for the scalar peak head's loss."""
+
+    TARGET = torch.tensor([0.0, 3.0, 10.0, 4.0]).view(1, 4, 1)
+
+    def test_scores_against_the_observed_block_maximum(self):
+        """Only the target is reduced; the prediction is already a scalar."""
+        loss_fn = PeakHeadLoss(base_loss_type='mse')
+        exact = torch.tensor([[10.0]])
+        assert loss_fn(exact, self.TARGET).item() == pytest.approx(0.0)
+        assert loss_fn(torch.tensor([[7.0]]), self.TARGET).item() == pytest.approx(9.0)
+
+    def test_accepts_a_squeezable_middle_axis(self):
+        """A head that emits (batch, 1, feature) must score the same as (batch, feature)."""
+        loss_fn = PeakHeadLoss(base_loss_type='mae')
+        flat = loss_fn(torch.tensor([[6.0]]), self.TARGET)
+        with_axis = loss_fn(torch.tensor([[[6.0]]]), self.TARGET)
+        assert flat.item() == pytest.approx(with_axis.item())
+        assert flat.item() == pytest.approx(4.0)
+
+    def test_curve_shape_cannot_influence_it(self):
+        """Two curves with the same maximum are the same target, whatever their shape.
+
+        This is the property PeakAugmentedLoss lacked: there, the peak term reached back into
+        the 24 curve outputs and the model answered by spiking one of them.
+        """
+        loss_fn = PeakHeadLoss(base_loss_type='mse')
+        spiky = torch.tensor([0.0, 0.0, 10.0, 0.0]).view(1, 4, 1)
+        broad = torch.tensor([9.0, 9.5, 10.0, 9.8]).view(1, 4, 1)
+        pred = torch.tensor([[8.0]])
+        assert loss_fn(pred, spiky).item() == pytest.approx(loss_fn(pred, broad).item())
+
+    @pytest.mark.parametrize("base", ["mse", "mae", "huber"])
+    def test_every_base_loss_is_finite_and_differentiable(self, base):
+        torch.manual_seed(0)
+        pred = torch.randn(8, 1, requires_grad=True)
+        target = torch.randn(8, 24, 1)
+        loss = PeakHeadLoss(base_loss_type=base, huber_delta=1.0)(pred, target)
+        loss.backward()
+        assert torch.isfinite(loss)
+        assert pred.grad is not None and torch.isfinite(pred.grad).all()
+
+    def test_gradient_reaches_only_the_peak_head(self):
+        """The curve must receive nothing from this term -- that is the entire point."""
+        curve = torch.randn(4, 24, 1, requires_grad=True)
+        peak = torch.randn(4, 1, requires_grad=True)
+        target = torch.randn(4, 24, 1)
+        PeakHeadLoss()(peak, target).backward()
+        assert curve.grad is None
+        assert peak.grad is not None and (peak.grad.abs() > 0).any()
 
 
 if __name__ == "__main__":
