@@ -81,6 +81,46 @@ def heteroscedasticity(pred: np.ndarray, true: np.ndarray, n_bins: int = 10) -> 
             "rank_corr": float(np.corrcoef(rank(order), rank(spread))[0, 1])}
 
 
+def change_control(pred: np.ndarray, true: np.ndarray, anchor: np.ndarray, leads) -> list:
+    """Does the forecast predict the change, or just replay the anchor?
+
+    Laperre et al. (2020) found a Dst LSTM that beat persistence on every conventional metric
+    while its dynamic-time-warping mass sat at exactly the forecast horizon -- it had learned
+    to emit a shifted copy of its input. Retraining on the change collapsed the correlation
+    from 0.630 to 0.168, which is what exposed it.
+
+    The same question can be asked of stored predictions without retraining. Take the change
+    each series makes from the anchor value: a forecast that replays the anchor has a
+    predicted change of zero and cannot correlate with the observed one. So a correlation on
+    the change is direct evidence that the forecast carries information about what happens
+    next, not just about where the index already is.
+
+    Args:
+        pred: Predictions, (n_events, n_leads), original units.
+        true: Observations, same shape.
+        anchor: Last observed value before the forecast, (n_events,).
+        leads: Lead indices to report.
+
+    Returns:
+        One dict per lead with the level and change correlations, persistence's level
+        correlation for comparison, and the skill of the predicted change against assuming
+        no change.
+    """
+    rows = []
+    for j in leads:
+        obs, fc = true[:, j], pred[:, j]
+        d_obs, d_fc = obs - anchor, fc - anchor
+        mae_model = float(np.abs(d_fc - d_obs).mean())
+        mae_nochange = float(np.abs(d_obs).mean())
+        rows.append({
+            "lead": j, "r_level": float(np.corrcoef(obs, fc)[0, 1]),
+            "r_change": float(np.corrcoef(d_obs, d_fc)[0, 1]),
+            "r_persistence": float(np.corrcoef(obs, anchor)[0, 1]),
+            "change_skill": 1.0 - mae_model / mae_nochange,
+        })
+    return rows
+
+
 def pod_at_far(score: np.ndarray, label: np.ndarray, budgets) -> list:
     """Best detection rate achievable within each false-alarm budget."""
     grid = np.quantile(score, np.arange(0.50, 0.9999, 0.0005))
@@ -174,6 +214,23 @@ def main() -> None:
                if het["ratio"] > 2 and het["rank_corr"] > 0.8 else
                "near-homoscedastic -- a recalibrated threshold on the mean is close to optimal")
     print(f"verdict: {verdict}")
+
+    n_leads = true.shape[1]
+    picks = sorted({0, 1, 3, 5, min(11, n_leads - 1), min(17, n_leads - 1), n_leads - 1})
+    rows = change_control(loaded[ref]["pred"][:, :args.leads], true, sample["pers"], picks)
+    print(f"\nChange control on '{ref}': a forecast that replays the anchor predicts zero "
+          f"change and\ncannot correlate with the observed change. A correlation here is "
+          f"information about what\nhappens next, not about where the index already is.")
+    print(f"{'lead':>6s} {'r(level)':>9s} {'r(change)':>10s} {'r(persistence)':>15s} "
+          f"{'change skill':>13s}")
+    for r in rows:
+        print(f"{(r['lead']+1)*0.5:5.1f}h {r['r_level']:9.3f} {r['r_change']:10.3f} "
+              f"{r['r_persistence']:15.3f} {r['change_skill']:13.3f}")
+    weakest = min(r["r_change"] for r in rows)
+    print(f"\nweakest change correlation {weakest:.3f} -- "
+          + ("the forecast carries genuine change information"
+             if weakest > 0.2 else
+             "close to a shifted copy of the anchor; retrain on the change to confirm"))
 
 
 if __name__ == "__main__":
