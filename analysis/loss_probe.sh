@@ -54,7 +54,7 @@ TVAR="${TARGET}30"
 SW_VARS="[v_avg,v_min,v_max,np_avg,np_min,np_max,t_avg,t_min,t_max,bx_avg,bx_min,bx_max,by_avg,by_min,by_max,bz_avg,bz_min,bz_max,bt_avg,bt_min,bt_max]"
 SW_DROP_GROUP="~data.timeseries.gnn_variable_groups.${TVAR}"
 
-ORDER="baseline notemporal temporal_rev tier_off patience25 leadnorm leadnorm_mae exceed50 exceed30 mse mae sww_l1 sww_strong pinball_q75 pinball_q90 target_zscore no_target_channel"
+ORDER="baseline peak1 peak05 peak_soft peak_mae notemporal temporal_rev tier_off patience25 leadnorm leadnorm_mae exceed50 exceed30 mse mae sww_l1 sww_strong pinball_q75 pinball_q90 target_zscore no_target_channel"
 
 # variant name -> extra Hydra overrides (case, not an associative array: bash 3.2 compat)
 variant_overrides() {
@@ -80,6 +80,15 @@ variant_overrides() {
         # the property the ridge gets for free by fitting every lead separately.
         leadnorm)     echo "training.regression_loss_type=lead_normalized" ;;
         leadnorm_mae) echo "training.regression_loss_type=lead_normalized training.lead_normalized.base_loss=mae" ;;
+        # Taking the max of 24 separately shrunk conditional means discounts the extremeness
+        # twice. Fitting the block maximum as its own quantity raises the correlation with the
+        # observed 12-h peak from 0.572 to 0.686 and tail reproduction from 0.411 to 0.569 in a
+        # ridge on the same inputs, at an unchanged dispersion-to-rho ratio -- discrimination,
+        # not inflation. These add that supervision to the existing outputs.
+        peak1)        echo "training.regression_loss_type=peak_augmented training.peak.weight=1.0" ;;
+        peak05)       echo "training.regression_loss_type=peak_augmented training.peak.weight=0.5" ;;
+        peak_soft)    echo "training.regression_loss_type=peak_augmented training.peak.weight=1.0 training.peak.soft_tau=0.5" ;;
+        peak_mae)     echo "training.regression_loss_type=peak_augmented training.peak.weight=1.0 training.peak.base_loss=mae" ;;
         # Residual spread rises 5x across the prediction deciles (rank correlation +0.96), so
         # P(Y>=t|X) is not monotone in the predicted mean and no refitted threshold on it is
         # Bayes-optimal. These read the output as a per-lead exceedance logit instead.

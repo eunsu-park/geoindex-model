@@ -393,9 +393,21 @@ model:
 training:
   # Loss functions
   # Options: mse, mae, huber, weighted_mse, solar_wind_weighted, pinball, lead_normalized,
-  #          exceedance_bce
+  #          exceedance_bce, peak_augmented
   regression_loss_type: "solar_wind_weighted"
   huber_delta: 10.0
+
+  # ---------------------------------------------------------------------------
+  # Peak Settings (regression_loss_type='peak_augmented')
+  # Adds a term comparing the maximum of the forecast window against the observed
+  # maximum, so the curve's peak is fitted as its own quantity rather than being
+  # whatever the maximum of 24 separately shrunk conditional means happens to be.
+  # soft_tau > 0 replaces the hard maximum with a log-sum-exp of that temperature.
+  # ---------------------------------------------------------------------------
+  peak:
+    base_loss: "mse"
+    weight: 1.0
+    soft_tau: 0.0
 
   # ---------------------------------------------------------------------------
   # Exceedance Settings (regression_loss_type='exceedance_bce')

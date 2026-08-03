@@ -15,6 +15,7 @@ from src.losses import (
     SolarWindWeightedLoss,
     LeadNormalizedLoss,
     ExceedanceBCELoss,
+    PeakAugmentedLoss,
 )
 
 
@@ -672,6 +673,70 @@ class TestExceedanceBCELoss:
         logits = torch.zeros(1, 4, 1)
         value = ExceedanceBCELoss(threshold=50.0, norm_stats=self.STATS)(logits, target)
         assert torch.isfinite(value)
+
+
+class TestPeakAugmentedLoss:
+    """Tests for the loss that supervises the peak of the forecast window."""
+
+    # Same total squared error, different peak error: `under` misses only the peak, `shifted`
+    # carries its whole error on a quiet lead and gets the peak exactly right.
+    TARGET = torch.tensor([0.0, 0.0, 10.0, 0.0]).view(1, 4, 1)
+    UNDER = torch.tensor([0.0, 0.0, 5.0, 0.0]).view(1, 4, 1)
+    SHIFTED = torch.tensor([5.0, 0.0, 10.0, 0.0]).view(1, 4, 1)
+
+    def test_weight_zero_reduces_to_the_base_loss(self):
+        """Without the peak term the two predictions above are indistinguishable."""
+        loss_fn = PeakAugmentedLoss(base_loss_type='mse', weight=0.0)
+        plain = ((self.UNDER - self.TARGET) ** 2).mean()
+        assert loss_fn(self.UNDER, self.TARGET).item() == pytest.approx(plain.item())
+        assert loss_fn(self.UNDER, self.TARGET).item() == pytest.approx(
+            loss_fn(self.SHIFTED, self.TARGET).item())
+
+    def test_peak_term_separates_a_missed_peak_from_a_misplaced_error(self):
+        """The whole point: an under-called peak must cost more than an equal-sized miss
+        somewhere flat."""
+        loss_fn = PeakAugmentedLoss(base_loss_type='mse', weight=1.0)
+        assert loss_fn(self.UNDER, self.TARGET).item() > loss_fn(self.SHIFTED, self.TARGET).item()
+
+    def test_gradient_pushes_the_peak_up(self):
+        """An under-called peak gets a gradient that raises it, and a hard max sends the peak
+        term's share to that lead alone."""
+        pred = self.UNDER.clone().requires_grad_(True)
+        PeakAugmentedLoss(base_loss_type='mse', weight=1.0)(pred, self.TARGET).backward()
+        g = pred.grad.view(-1)
+        assert g[2] < 0                                   # raise the predicted peak
+        assert torch.allclose(g[[0, 1, 3]], torch.zeros(3))
+
+    def test_soft_tau_spreads_the_gradient_over_the_leads_near_the_peak(self):
+        """With log-sum-exp every lead gets a share, weighted toward the largest."""
+        pred = torch.tensor([0.0, 4.0, 5.0, 0.0]).view(1, 4, 1).requires_grad_(True)
+        PeakAugmentedLoss(base_loss_type='mse', weight=1.0, soft_tau=1.0)(
+            pred, self.TARGET).backward()
+        g = pred.grad.view(-1)
+        assert g[1] < 0 and g[2] < 0                      # both near-peak leads are raised
+        assert abs(g[2]) > abs(g[1])                      # the largest lead gets the most
+
+    def test_soft_max_converges_to_the_hard_max(self):
+        """log-sum-exp overestimates the max by at most tau*log(n_leads), so a small tau is a
+        drop-in for amax."""
+        x = torch.tensor([1.0, 7.0, 3.0, 2.0]).view(1, 4, 1)
+        hard = PeakAugmentedLoss(soft_tau=0.0)._peak(x)
+        loose = PeakAugmentedLoss(soft_tau=1.0)._peak(x)
+        tight = PeakAugmentedLoss(soft_tau=0.01)._peak(x)
+        assert hard.item() == pytest.approx(7.0)
+        assert loose.item() > hard.item()
+        assert loose.item() <= hard.item() + np.log(4) + 1e-6
+        assert tight.item() == pytest.approx(7.0, abs=1e-3)
+
+    @pytest.mark.parametrize("base", ["mse", "mae", "huber"])
+    def test_every_base_loss_is_finite_and_differentiable(self, base):
+        torch.manual_seed(0)
+        pred = torch.randn(8, 24, 1, requires_grad=True)
+        target = torch.randn(8, 24, 1)
+        loss = PeakAugmentedLoss(base_loss_type=base, weight=1.0, huber_delta=1.0)(pred, target)
+        loss.backward()
+        assert torch.isfinite(loss)
+        assert pred.grad is not None and torch.isfinite(pred.grad).all()
 
 
 if __name__ == "__main__":
