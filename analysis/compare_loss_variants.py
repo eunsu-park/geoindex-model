@@ -16,9 +16,15 @@ input window, fitted on the same training index and scored on the same anchors. 
 line a trained model has to clear -- a variant that only wins on MAE while falling behind
 ridge on skill@l1 / std_r / tail reproduction has bought its MAE by damping the forecast.
 
+With ``--categorical`` each variant is also scored as a yes/no storm warning at the NOAA
+thresholds. The two rankings are close to opposite: the MAE-optimal variants under-forecast
+storms by three to eight times (frequency BIAS 0.12-0.41) and score below plain persistence
+on HSS, while the tier-weighted ones sit near BIAS 1.0 and lead. Accuracy reporting and
+warning operation are different products and cannot be ranked by one number.
+
 Usage:
     python analysis/compare_loss_variants.py --results-dir /path/to/results \
-        --prefix probe_ap_in12h_out12h_gnn_transformer --ridge
+        --prefix probe_ap_in12h_out12h_gnn_transformer --ridge --categorical
 """
 
 from __future__ import annotations
@@ -175,6 +181,57 @@ def ridge_reference(sample: dict, anchors, datasets_root: str, parquet: str,
     return out
 
 
+def contingency(pred: np.ndarray, obs: np.ndarray, threshold: float) -> dict:
+    """Score a forecast as a yes/no event at one ap threshold.
+
+    The 2x2 table is built over every (event, lead) pair. BIAS is the frequency bias --
+    forecast events divided by observed events -- so 1.0 means the forecast calls the event
+    as often as it happens, below 1.0 means it under-forecasts. It is the metric that
+    separates a damped forecast from a usable warning: an MAE-optimal model can score well
+    on MAE while calling storms three to eight times too rarely.
+
+    Args:
+        pred: Predicted values.
+        obs: Observed values (same shape).
+        threshold: Event threshold in ap units.
+
+    Returns:
+        Dict with hits/false_alarms/misses/correct_negatives and pod, far, csi, bias, hss.
+    """
+    hit = int(((obs >= threshold) & (pred >= threshold)).sum())
+    false_alarm = int(((obs < threshold) & (pred >= threshold)).sum())
+    miss = int(((obs >= threshold) & (pred < threshold)).sum())
+    correct_neg = int(((obs < threshold) & (pred < threshold)).sum())
+
+    observed_yes = hit + miss
+    forecast_yes = hit + false_alarm
+    denom = (observed_yes * (miss + correct_neg) + forecast_yes * (false_alarm + correct_neg))
+    return {
+        "hits": hit, "false_alarms": false_alarm, "misses": miss,
+        "correct_negatives": correct_neg,
+        "pod": hit / observed_yes if observed_yes else float("nan"),
+        "far": false_alarm / forecast_yes if forecast_yes else float("nan"),
+        "csi": hit / (hit + false_alarm + miss) if (hit + false_alarm + miss) else float("nan"),
+        "bias": forecast_yes / observed_yes if observed_yes else float("nan"),
+        "hss": 2 * (hit * correct_neg - false_alarm * miss) / denom if denom else 0.0,
+    }
+
+
+def report_categorical(preds: dict, obs: np.ndarray, thresholds) -> None:
+    """Print one contingency table per threshold, ranked by HSS."""
+    for threshold in thresholds:
+        n_events = int((obs >= threshold).sum())
+        print(f"\n=== threshold {threshold:g} ap  "
+              f"(observed {n_events} / {obs.size} = {100 * n_events / obs.size:.2f}%) ===")
+        print(f"{'variant':20s} {'POD':>6s} {'FAR':>6s} {'CSI':>6s} {'BIAS':>6s} {'HSS':>7s}")
+        scored = [(name, contingency(p, obs, threshold)) for name, p in preds.items()]
+        for name, c in sorted(scored, key=lambda t: -t[1]["hss"]):
+            print(f"{name:20s} {c['pod']:6.3f} {c['far']:6.3f} {c['csi']:6.3f} "
+                  f"{c['bias']:6.3f} {c['hss']:7.3f}")
+    print("\nPOD = hits/observed, FAR = false alarms/forecast, CSI = hits/(hits+FA+misses),")
+    print("BIAS = forecast events/observed events (1.0 = right frequency), HSS = Heidke skill.")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Compare loss-probe variants")
     ap.add_argument("--results-dir", required=True)
@@ -186,6 +243,10 @@ def main() -> None:
     ap.add_argument("--parquet", default="data.parquet")
     ap.add_argument("--train-index", default="total_ap/train_index.csv")
     ap.add_argument("--ridge-alpha", type=float, default=100.0)
+    ap.add_argument("--categorical", action="store_true",
+                    help="also score each variant as a yes/no storm warning (POD/FAR/CSI/BIAS/HSS)")
+    ap.add_argument("--thresholds", default="30,50,100",
+                    help="comma-separated ap thresholds for --categorical (default NOAA G1/G2/G3+)")
     args = ap.parse_args()
 
     paths = sorted(glob.glob(os.path.join(
@@ -206,13 +267,14 @@ def main() -> None:
             break
 
     rows = [summarize(name, v, pers_map) for name, v in loaded.items()]
+    ridge_pred = None
 
     if args.ridge:
         sample = next(iter(loaded.values()))
-        pred = ridge_reference(sample, sample["anchor"], args.datasets_root,
-                               args.parquet, args.train_index, args.ridge_alpha)
+        ridge_pred = ridge_reference(sample, sample["anchor"], args.datasets_root,
+                                     args.parquet, args.train_index, args.ridge_alpha)
         rows.append(summarize("RIDGE (reference)",
-                              {**sample, "pred": pred}, pers_map))
+                              {**sample, "pred": ridge_pred}, pers_map))
 
     rows.sort(key=lambda r: -r["skill"])
 
@@ -224,6 +286,15 @@ def main() -> None:
               f"{100*r['repro_30']:5.1f}% {100*r['repro_50']:5.1f}% {100*r['repro_100']:5.1f}%")
     print("\nrepro = mean(prediction) / mean(observation) on events above the threshold; "
           "100% = unbiased in the tail.")
+
+    if args.categorical:
+        sample = next(iter(loaded.values()))
+        preds = {name: v["pred"] for name, v in loaded.items()}
+        if ridge_pred is not None:
+            preds["RIDGE (reference)"] = ridge_pred
+        preds["persistence"] = np.repeat(sample["pers"][:, None], sample["true"].shape[1], axis=1)
+        report_categorical(preds, sample["true"],
+                           [float(t) for t in args.thresholds.split(",")])
 
 
 if __name__ == "__main__":
