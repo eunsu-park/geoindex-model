@@ -139,6 +139,7 @@ done
 [[ -n "$FAILED" ]] && echo "Failed variants:$FAILED"
 
 echo
-echo "Done. Compare with:"
-echo "  python analysis/compare_loss_variants.py --results-dir <save_root> \\"
-echo "      --prefix probe_${TARGET}_${IO}_${MODEL}"
+echo "Done. Compare with (substitute your results root; no angle brackets -- the shell would"
+echo "read them as a redirect and argparse then reports a missing --results-dir argument):"
+echo "  python analysis/compare_loss_variants.py --results-dir /path/to/results \\"
+echo "      --prefix probe_${TARGET}_${IO}_${MODEL} --ridge"
