@@ -13,6 +13,7 @@ from src.losses import (
     MultiModalMSELoss,
     GeneralWeightedMSELoss,
     SolarWindWeightedLoss,
+    LeadNormalizedLoss,
 )
 
 
@@ -559,6 +560,68 @@ class TestSolarWindWeightedLoss:
             torch.tensor(4.0, dtype=torch.float32),
             rtol=1e-4
         ), f"Weight should be 4.0 (G2 tier), got {weight_with[0, 0, 0]}"
+
+
+class TestLeadNormalizedLoss:
+    """Tests for the per-lead normalized loss."""
+
+    def _errors(self, seq_len=4, batch=32, scales=None):
+        """Predictions whose per-lead error scale is set by `scales`."""
+        torch.manual_seed(0)
+        target = torch.zeros(batch, seq_len, 1)
+        pred = torch.randn(batch, seq_len, 1)
+        for j, s in enumerate(scales):
+            pred[:, j, 0] *= s
+        return pred, target
+
+    def test_far_lead_stops_dominating(self):
+        """A lead with a 10x larger residual must not carry 100x the weight."""
+        pred, target = self._errors(scales=[1.0, 1.0, 1.0, 10.0])
+        plain = ((pred - target) ** 2)
+        per_lead_plain = plain.mean(dim=(0, 2))
+        share_plain = per_lead_plain[3] / per_lead_plain.sum()
+
+        loss_fn = LeadNormalizedLoss(base_loss_type='mse', momentum=1.0)
+        loss_fn(pred, target)                      # first call seeds the running scale
+        weights = 1.0 / loss_fn.running.clamp_min(1e-8)
+        weights = weights / weights.mean()
+        share_norm = (per_lead_plain[3] * weights[3]) / (per_lead_plain * weights).sum()
+
+        assert share_plain > 0.9                   # unweighted: the far lead is everything
+        assert share_norm == pytest.approx(0.25, abs=0.02)   # normalized: equal share
+
+    def test_reported_value_is_the_harmonic_mean(self):
+        """Mean-1 weights make the reported loss the harmonic mean over leads.
+
+        It stays on the same scale as the plain loss (never larger, and equal when the
+        per-lead losses are identical), which is what keeps LR and early-stopping
+        thresholds meaningful.
+        """
+        pred, target = self._errors(scales=[1.0, 1.0, 1.0, 1.0])
+        per_lead = ((pred - target) ** 2).mean(dim=(0, 2))
+        harmonic = 1.0 / (1.0 / per_lead).mean()
+        value = LeadNormalizedLoss(base_loss_type='mse', momentum=1.0)(pred, target).item()
+        assert value == pytest.approx(harmonic.item(), rel=1e-5)
+        assert value <= per_lead.mean().item() + 1e-6
+
+    def test_running_scale_frozen_without_grad(self):
+        """Validation passes (no_grad) must not move the running estimate."""
+        pred, target = self._errors(scales=[1.0, 1.0, 1.0, 10.0])
+        loss_fn = LeadNormalizedLoss(base_loss_type='mse', momentum=0.5)
+        loss_fn(pred, target)
+        before = loss_fn.running.clone()
+        with torch.no_grad():
+            loss_fn(pred * 5.0, target)
+        assert torch.equal(loss_fn.running, before)
+
+    def test_mae_base_and_gradients(self):
+        """The MAE base reduces to a finite, differentiable scalar."""
+        pred, target = self._errors(scales=[1.0, 2.0, 3.0, 4.0])
+        pred.requires_grad_(True)
+        loss = LeadNormalizedLoss(base_loss_type='mae', momentum=1.0)(pred, target)
+        loss.backward()
+        assert torch.isfinite(loss)
+        assert pred.grad is not None and torch.isfinite(pred.grad).all()
 
 
 if __name__ == "__main__":

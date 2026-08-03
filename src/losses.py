@@ -960,6 +960,80 @@ class GradientBasedWeightLoss(nn.Module):
             return weighted_loss
 
 
+class LeadNormalizedLoss(nn.Module):
+    """Per-element loss rescaled so every forecast lead contributes equally.
+
+    One network predicts the whole horizon, but the residual grows with lead time: the far
+    leads carry a much larger loss than the near ones purely because they are less
+    predictable, so they dominate the gradient even with no explicit weighting. A per-lead
+    ridge does not have this problem -- it fits each lead independently -- and it beats the
+    trained models at matched dispersion. This loss approximates that independence by
+    dividing each lead's loss by a running estimate of its own magnitude, which makes the
+    objective proportional to the mean per-lead relative error.
+
+    The running estimate is an EMA over training batches, updated only when gradients are
+    enabled so that validation passes (run under ``torch.no_grad()``) do not move it. The
+    weights are renormalized to mean 1, which keeps the loss on the same scale as the
+    unweighted one -- the reported value is the harmonic mean of the per-lead losses rather
+    than their arithmetic mean, so it is never larger and coincides when the leads are
+    equally hard. Learning-rate and early-stopping thresholds therefore still apply.
+
+    Args:
+        base_loss_type: Element-wise base loss ('mse', 'mae', 'huber').
+        momentum: EMA update rate for the per-lead scale.
+        huber_delta: Beta of the smooth L1 loss when ``base_loss_type='huber'``.
+        eps: Floor on the per-lead scale.
+        reduction: 'mean' or 'sum' over the (already normalized) per-lead losses.
+    """
+
+    def __init__(self, base_loss_type: str = 'mse', momentum: float = 0.05,
+                 huber_delta: float = 10.0, eps: float = 1e-8, reduction: str = 'mean'):
+        super().__init__()
+        self.base_loss_type = base_loss_type.lower()
+        self.momentum = float(momentum)
+        self.huber_delta = float(huber_delta)
+        self.eps = float(eps)
+        self.reduction = reduction
+        # Not a registered buffer: create_loss_functions never moves the criterion to the
+        # model device, and this is a plain statistic that does not belong in a checkpoint.
+        self.running = None
+
+    def _elementwise(self, predictions: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        """Compute the unreduced base loss."""
+        if self.base_loss_type == 'mae':
+            return torch.abs(predictions - targets)
+        if self.base_loss_type == 'huber':
+            return F.smooth_l1_loss(predictions, targets, beta=self.huber_delta,
+                                    reduction='none')
+        return (predictions - targets) ** 2
+
+    def forward(self, predictions: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        """Compute the lead-normalized loss.
+
+        Args:
+            predictions: Predicted values of shape (batch, seq_len, feature_dim).
+            targets: Target values of the same shape.
+
+        Returns:
+            Scalar loss.
+        """
+        err = self._elementwise(predictions, targets)
+        dims = tuple(d for d in range(err.dim()) if d != 1)
+        per_lead = err.mean(dim=dims)                      # (seq_len,)
+
+        observed = per_lead.detach()
+        if self.running is None or self.running.numel() != per_lead.numel():
+            self.running = observed.clone()
+        elif torch.is_grad_enabled():                      # skip during validation
+            self.running.mul_(1.0 - self.momentum).add_(observed, alpha=self.momentum)
+
+        weights = 1.0 / self.running.clamp_min(self.eps)
+        weights = weights / weights.mean()                 # keep the overall scale
+        scaled = per_lead * weights
+
+        return scaled.sum() if self.reduction == 'sum' else scaled.mean()
+
+
 class PinballLoss(nn.Module):
     """Pinball (quantile) loss for a single-quantile point forecast.
 
@@ -1317,6 +1391,14 @@ def create_loss_functions(config, stat_dict: Optional[dict] = None):
         )
         denorm_status = "enabled" if denormalize else "disabled"
         regression_loss_name = f"SolarWindWeighted({sw_cfg.weighting_mode}, denorm={denorm_status})"
+    elif regression_loss_type == "lead_normalized":
+        ln_cfg = getattr(config.training, 'lead_normalized', None)
+        base = getattr(ln_cfg, 'base_loss', 'mse') if ln_cfg is not None else 'mse'
+        momentum = float(getattr(ln_cfg, 'momentum', 0.05)) if ln_cfg is not None else 0.05
+        regression_criterion = LeadNormalizedLoss(
+            base_loss_type=base, momentum=momentum,
+            huber_delta=config.training.huber_delta, reduction='mean')
+        regression_loss_name = f"LeadNormalized({base}, m={momentum:g})"
     elif regression_loss_type == "pinball":
         quantile = float(getattr(getattr(config.training, 'pinball', {}), 'quantile', 0.75))
         regression_criterion = PinballLoss(quantile=quantile, reduction='mean')

@@ -54,7 +54,7 @@ TVAR="${TARGET}30"
 SW_VARS="[v_avg,v_min,v_max,np_avg,np_min,np_max,t_avg,t_min,t_max,bx_avg,bx_min,bx_max,by_avg,by_min,by_max,bz_avg,bz_min,bz_max,bt_avg,bt_min,bt_max]"
 SW_DROP_GROUP="~data.timeseries.gnn_variable_groups.${TVAR}"
 
-ORDER="baseline notemporal temporal_rev tier_off patience25 mse mae sww_l1 sww_strong pinball_q75 pinball_q90 target_zscore no_target_channel"
+ORDER="baseline notemporal temporal_rev tier_off patience25 leadnorm leadnorm_mae mse mae sww_l1 sww_strong pinball_q75 pinball_q90 target_zscore no_target_channel"
 
 # variant name -> extra Hydra overrides (case, not an associative array: bash 3.2 compat)
 variant_overrides() {
@@ -75,6 +75,11 @@ variant_overrides() {
         tier_off)     echo "training.solar_wind_weighted.weighting_mode=threshold training.solar_wind_weighted.high_weight=1.0" ;;
         # every run so far early-stopped at epoch 14-15 (patience 10 -> best epoch ~5 of 100)
         patience25)   echo "training.early_stopping_patience=25" ;;
+        # Removing the tier weights alone still left the models on a worse MAE/dispersion
+        # frontier than a per-lead ridge. These equalise each lead's contribution, which is
+        # the property the ridge gets for free by fitting every lead separately.
+        leadnorm)     echo "training.regression_loss_type=lead_normalized" ;;
+        leadnorm_mae) echo "training.regression_loss_type=lead_normalized training.lead_normalized.base_loss=mae" ;;
         # symmetric losses without the NOAA tier weighting -- isolates the weighting's contribution
         mse)          echo "training.regression_loss_type=mse" ;;
         mae)          echo "training.regression_loss_type=mae" ;;
