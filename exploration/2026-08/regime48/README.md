@@ -104,20 +104,77 @@ invalid: the storm model's training loss was still falling at epoch 14 while its
 — computed on an 85 %-quiet set — had bottomed at epoch 4, so early stopping kept a
 barely-trained checkpoint that predicted 43 ap on storms whose observed mean was 88.
 
-## Pass mark, fixed before the runs
+## Results — the split works on the level, and the maximum throws it away
 
-Scored on the storm anchors of the validation set (observed 12 h peak ≥ 48):
+Measured on the 23,514 validation anchors, storm = observed 12 h peak ≥ 48 (n = 4,829):
 
-| criterion | value to beat | why |
+| scored on storm anchors | pooled | regime split |
 |---|---|---|
-| reproduction ≥100 ap | **> 0.580** | the pooled model on the same rows; this is the whole point |
-| rho within the branch | **≥ 0.594** | if it falls, the storm sample is too thin — this is what happens at ≥ 111 |
-| `P(storm\|x)` mean | within **±10 %** of the observed rate | a scenario without a calibrated probability misleads |
-| quiet-branch MAE | **< 8.64** | the pooled model on quiet rows |
+| **curve level** vs observed | 93 % | **109 %** |
+| **peak** vs observed | 43 % | 55.5 % |
+| MAE | 45.70 | **36.00** |
+| rho | 0.482 | 0.471 |
+| sharpness (peak / window mean) | 1.20 | 1.23 — observed is **2.58** |
 
-And one that is **not** a criterion: the mixture will not beat the pooled model on rho or MAE.
-The ridge says 0.721 vs 0.724. Do not read that as failure — it is what the decomposition
-predicts.
+The storm branch learns the level completely — it slightly overshoots the observed curve mean.
+What it does not learn is the shape, and the maximum of a flat curve is low whatever its level.
+That is the double shrinkage of section 2.7 again: the maximum of 24 separately shrunk
+conditional means is not the shrunk maximum.
+
+The quiet branch is the same effect in reverse: rho improves (0.546 → 0.584) but MAE gets worse
+(9.79 → 10.45), because it learns a lower level and then misses the small peaks inside quiet
+windows.
+
+## What the ridge proxy says next — and how far to trust it
+
+`ridge_proxy.py` fits **both** structures per regime and, unlike the first pre-test, validates
+itself before predicting anything. It reproduces the trained storm branch (103 % / 54 % against
+the measured 109 % / 52 %) but **not** the pooled model (79 % / 40 % against 93 % / 43 %), and it
+says so in its own output.
+
+| storm rows, peak vs observed | |
+|---|---|
+| pooled, max of the curve | 40 % |
+| regime split, max of the curve | 54 % |
+| pooled, separate peak output | 72 % |
+| **regime split + separate peak output** | **102 %** |
+
+The two fixes address different defects — the split fixes the branch *level*, the peak output
+avoids the double shrinkage — and they stack close to additively rather than multiplicatively.
+The same pattern holds on quiet rows (64 % → 96 %, MAE 8.30 → 6.28).
+
+**Treat that 102 % as a ridge result, not a prediction.** Of the three ridge-led predictions in
+this investigation, one transferred (the clock change, predicted +0.0104 of AUC and delivered
++0.0109) and two did not (the block maximum promised +0.11 of correlation and returned +0.014;
+the first regime pre-test promised reproduction 0.649 and returned 0.360, because it fitted a
+different target from the one the deep model fits).
+
+## Pass mark for the next run — regime split + peak head
+
+Set from the **measured deep numbers**, not from the ridge:
+
+| criterion | value to beat | where it comes from |
+|---|---|---|
+| storm peak recovery | **> 55.5 %** | the regime split measured here |
+| storm MAE | **< 36.00** | the regime split measured here |
+| quiet MAE | **< 9.79** | the pooled model on quiet rows |
+| rho in the storm branch | **≥ 0.482** | the pooled model on storm rows |
+
+`score_regimes.py` applies these only to a run that emits `peak_prediction`; against the
+curve-only runs it prints the reference values instead, since scoring them against themselves
+would be circular.
+
+## Two traps this experiment fell into
+
+Both were the ap ladder in different disguises, and both are now guarded in code.
+
+1. **A threshold off the ladder.** `50` silently means `56`; `100` means `111`.
+   `build_regime_indices.py` refuses any threshold that is not a ladder value.
+2. **The denormalization round trip.** The stored archives hold `47.99999` where the ladder
+   value is `48`, so a bare `peak >= 48` drops every window whose maximum is exactly 48 and
+   silently scores the `>= 56` subset — which the first version of `score_regimes.py` did, on
+   3,634 rows instead of 4,829. It now applies a half-unit tolerance and prints what a bare
+   comparison would have given.
 
 ## Caveats to carry into the write-up
 

@@ -32,14 +32,17 @@ def load(run):
     path = os.path.join(ROOT, run, "validation", "best", "npz.zip")
     if not os.path.exists(path):
         raise SystemExit(f"missing: {path}")
-    anchors, true, pred = [], [], []
+    anchors, true, pred, head = [], [], [], []
     with zipfile.ZipFile(path) as z:
         for name in sorted(n for n in z.namelist() if n.endswith(".npz")):
             d = np.load(io.BytesIO(z.read(name)), allow_pickle=True)
             anchors.append(str(np.asarray(d["anchor"])))
             true.append(np.asarray(d["targets"])[:, 0])
             pred.append(np.asarray(d["predictions"])[:, 0])
-    return np.asarray(anchors), np.asarray(true), np.asarray(pred)
+            if "peak_prediction" in d:
+                head.append(float(np.asarray(d["peak_prediction"]).ravel()[0]))
+    return (np.asarray(anchors), np.asarray(true), np.asarray(pred),
+            np.asarray(head) if head else None)
 
 
 def main() -> None:
@@ -52,16 +55,29 @@ def main() -> None:
     runs = {"quiet": f"{args.stem}_quiet", "storm": f"{args.stem}_storm",
             "pooled": args.pooled}
     loaded = {k: load(v) for k, v in runs.items()}
-    anchors, true, _ = loaded["pooled"]
-    for k, (a, t, _) in loaded.items():
+    anchors, true, _, _ = loaded["pooled"]
+    for k, (a, t, _, _) in loaded.items():
         assert np.array_equal(a, anchors), f"{k}: anchors differ from the pooled run"
         assert np.allclose(t, true, atol=1e-3), f"{k}: targets differ"
 
     peak = true.max(axis=1)
-    storm = peak >= args.threshold
-    P = {k: v[2].max(axis=1) for k, v in loaded.items()}
+    # The archive stores denormalized targets, and the log1p round trip lands a ladder value of
+    # 48 at 47.99999. A bare `>= 48` therefore drops every window whose true maximum is exactly
+    # 48 and silently scores the >= 56 subset instead -- which is what the first version of this
+    # script did. The ladder gap around 48 is 8, so half a unit of tolerance is unambiguous.
+    storm = peak >= args.threshold - 0.5
+    # A run with a peak head emits the window maximum as its own scalar; that is the quantity
+    # to score, not the maximum of the curve, which is doubly shrunk (section 2.7).
+    P, source = {}, {}
+    for k, v in loaded.items():
+        if v[3] is not None:
+            P[k], source[k] = v[3], "head"
+        else:
+            P[k], source[k] = v[2].max(axis=1), "curve max"
     print(f"{len(anchors)} validation anchors, storm (peak >= {args.threshold:g}) "
-          f"{int(storm.sum())} ({100*storm.mean():.1f} %)\n")
+          f"{int(storm.sum())} ({100*storm.mean():.1f} %)")
+    print(f"  (threshold applied with 0.5 tolerance for the denormalization round trip; "
+          f"a bare >= would give {int((peak >= args.threshold).sum())})\n")
 
     def row(label, p, mask, note=""):
         y = peak[mask]
@@ -72,6 +88,7 @@ def main() -> None:
         print(f"  {label:30s} {rho:7.3f} {float(np.polyfit(y, q, 1)[0]):7.3f} "
               f"{rep:8.3f} {float(np.abs(q - y).mean()):8.2f}   {note}")
 
+    print("peak taken from: " + ", ".join(f"{k}={v}" for k, v in source.items()) + "\n")
     hdr = f"  {'':30s} {'rho':>7s} {'slope':>7s} {'repro':>8s} {'MAE':>8s}"
     print("CONDITIONAL — rows selected on the OBSERVED label, not a forecast improvement")
     print(hdr)
@@ -95,8 +112,26 @@ def main() -> None:
     print("  (a calibrated P(storm|x) is needed for the mixture row; take it from")
     print("   calibrate_warning.py on the pooled run, then combine the two branches)")
 
+    # The pass mark below is for a run that ADDS a peak head to the regime split. The
+    # curve-only regime runs are the reference these numbers came from, so scoring them
+    # against themselves would be circular -- report the reference instead.
+    if source.get("storm") != "head":
+        print("\nREFERENCE for the next run (regime split + peak head must beat these)")
+        print(f"  storm peak recovery   {100*P['storm'][storm].mean()/peak[storm].mean():5.1f} %")
+        print(f"  storm MAE             {float(np.abs(P['storm'][storm]-peak[storm]).mean()):5.2f}")
+        print(f"  quiet MAE (pooled)    {float(np.abs(P['pooled'][~storm]-peak[~storm]).mean()):5.2f}")
+        print(f"  rho in the storm branch (pooled) "
+              f"{float(np.corrcoef(P['pooled'][storm], peak[storm])[0,1]):.3f}")
+        return
+
     print("\nPASS MARK")
     checks = [
+        ("storm peak recovery > 55.5 % (regime split, curve max)",
+         float(P["storm"][storm].mean() / peak[storm].mean()) > 0.555),
+        ("storm MAE < 36.00 (regime split)",
+         float(np.abs(P["storm"][storm] - peak[storm]).mean()) < 36.00),
+        ("quiet MAE < 9.79 (pooled)",
+         float(np.abs(P["quiet"][~storm] - peak[~storm]).mean()) < 9.79),
         ("reproduction on storms > pooled",
          float(P["storm"][storm & (peak >= 100)].mean() /
                peak[storm & (peak >= 100)].mean()) >
