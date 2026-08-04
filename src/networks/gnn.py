@@ -433,6 +433,8 @@ class GNNOnlyModel(nn.Module):
         timesnet_top_k: Number of dominant periods per TimesBlock.
         timesnet_num_kernels: Number of Inception conv branches.
         linear_hidden_dim: Hidden dim for the Flatten+MLP temporal reducer.
+        peak_head: Add a second head predicting the maximum over the forecast window as its
+            own scalar, exposed through ``forward(..., return_peak=True)``.
     """
 
     def __init__(
@@ -465,6 +467,7 @@ class GNNOnlyModel(nn.Module):
         timesnet_top_k: int = 3,
         timesnet_num_kernels: int = 3,
         linear_hidden_dim: int = 256,
+        peak_head: bool = False,
     ):
         super().__init__()
 
@@ -510,6 +513,24 @@ class GNNOnlyModel(nn.Module):
             nn.Linear(d_model // 2, target_sequence_length * num_target_variables)
         )
 
+        # Optional second head predicting the maximum over the forecast window as its own
+        # quantity. The maximum of `target_sequence_length` separately optimised conditional
+        # means is doubly shrunk -- each is already pulled toward climatology by its own
+        # correlation -- so it reproduces about a third of an observed storm peak. Supervising
+        # the maximum through the shared 24 outputs instead (PeakAugmentedLoss) fixes the
+        # magnitude but destroys the curve: with no timing information in the peak term, the
+        # cheapest solution is to nominate one output step as a maximum register, and the
+        # trained model does exactly that for 99.7 % of anchors. A separate scalar keeps the
+        # two products apart, so the curve is scored only as a curve.
+        self.peak_head = None
+        if peak_head:
+            self.peak_head = nn.Sequential(
+                nn.Linear(d_model, d_model // 2),
+                nn.ReLU(),
+                nn.Dropout(gnn_dropout),
+                nn.Linear(d_model // 2, num_target_variables)
+            )
+
     @property
     def adjacency_matrix(self) -> torch.Tensor:
         """Return the learned adjacency matrix (for visualization)."""
@@ -519,18 +540,26 @@ class GNNOnlyModel(nn.Module):
         self,
         solar_wind_input: torch.Tensor,
         image_input: Optional[torch.Tensor] = None,
-        return_features: bool = False
-    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor, None]]:
+        return_features: bool = False,
+        return_peak: bool = False
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, ...]]:
         """Forward pass.
 
         Args:
             solar_wind_input: Input time series (B, seq_len, num_vars).
             image_input: Ignored (API compatibility).
             return_features: Whether to return intermediate features.
+            return_peak: Whether to also return the peak head's scalar prediction. Requires
+                the model to have been built with ``peak_head=True``.
 
         Returns:
-            Predictions (B, target_seq_len, num_target_vars), or
-            tuple (predictions, features, None) if return_features=True.
+            Predictions (B, target_seq_len, num_target_vars). With return_features, the tuple
+            (predictions, features, None). With return_peak, the peak prediction
+            (B, num_target_vars) is appended to whichever of those is returned, so the default
+            single-tensor contract is unchanged unless a caller opts in.
+
+        Raises:
+            RuntimeError: If return_peak is set on a model built without a peak head.
         """
         gnn_features = self.gnn_encoder(solar_wind_input)  # (B, d_model)
 
@@ -541,9 +570,20 @@ class GNNOnlyModel(nn.Module):
             self.num_target_variables
         )
 
+        if not return_peak:
+            if return_features:
+                return output, gnn_features, None
+            return output
+
+        if self.peak_head is None:
+            raise RuntimeError(
+                "return_peak=True but this model was built without a peak head; set "
+                "training.peak_head.enabled=true so the head exists at construction time"
+            )
+        peak = self.peak_head(gnn_features)  # (B, num_target_vars)
         if return_features:
-            return output, gnn_features, None
-        return output
+            return output, gnn_features, None, peak
+        return output, peak
 
 
 @register_model("gnn")
@@ -608,8 +648,12 @@ def _create_gnn(config):
         timesnet_top_k=timesnet_top_k,
         timesnet_num_kernels=timesnet_num_kernels,
         linear_hidden_dim=linear_hidden_dim,
+        peak_head=bool(getattr(getattr(config, 'training', None), 'peak_head', None)
+                       and config.training.peak_head.enabled),
     )
     print(f"  GNN temporal encoder: {gnn_temporal_type}")
+    if model.peak_head is not None:
+        print("  GNN: separate peak head enabled (scalar block maximum)")
     print(f"  GNN: {gnn_num_gcn_layers} GCN layers, {gnn_num_nodes} nodes, "
           f"groups={gnn_group_sizes}")
     return model
