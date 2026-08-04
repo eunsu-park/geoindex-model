@@ -191,3 +191,42 @@ Both were the ap ladder in different disguises, and both are now guarded in code
   which the trajectory test could not (storm PIT 0.815); it does not fix the curve *shape*, which
   the trajectory test could (sharpness 2.73 against observed 2.59). Sampling trajectories
   **within** each branch is the natural next step and combines the two.
+
+## What the full visual pass shows — the 82 % is a mixture of two very different numbers
+
+All 23,514 validation anchors were rendered with
+`../analysis/plot_all_anchors.py` (pooled + both branches, each branch's peak head drawn as a
+level spanning the window) to
+`~/Projects/GeoIndex/results/plots_all_regime48ph/`. Reading the index that pass produced:
+
+| observed peak | n | observed | storm head | recovery |
+|---|---|---|---|---|
+| ≥ 100 | 736 | 160.1 | 76.9 | **48 %** |
+| 48–99 | 4,093 | 63.5 | 62.2 | **98 %** |
+
+The headline "82 % of the observed storm peak" is not a uniform improvement. On moderate storms
+the head is essentially calibrated; on the events that matter operationally it is still damped by
+half. The aggregate hid this because the 48–99 band outnumbers the ≥ 100 band by 5.6 to 1.
+
+**The storm head is nearly a constant on quiet inputs.** Over the 18,685 quiet anchors it has
+mean 56.7 and standard deviation **3.8** (5–95 % spans 51–63); on storm anchors it has mean 64.4
+and sd 14.9. So "if a storm comes" says about 57 ap on a quiet day almost regardless of the
+input — it carries no information there, and its only honest use is behind a calibrated
+`P(storm|x)`. This is the caveat above, now measured rather than anticipated.
+
+The quiet head has the mirror-image floor: on the 2,444 anchors whose observed peak is below 9 it
+averages 10.0, and its 5th percentile over all quiet anchors is 7.0.
+
+Navigation for the contact sheets (24 panels each, ordered by observed peak):
+
+| sheets | band |
+|---|---|
+| 1–31 | ≥ 100 ap |
+| 31–202 | 48–99 ap |
+| 202–448 | 27–39 ap |
+| 448–878 | 9–22 ap |
+| 878–980 | < 9 ap |
+
+Sheet 1 is the April 2023 storm (observed 294) and is the clearest single picture of what is left:
+the storm head calls 60 against 294, and every branch curve is flat where the observation has a
+two-step structure.
