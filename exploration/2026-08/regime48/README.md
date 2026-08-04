@@ -1,5 +1,21 @@
 # Two-regime training at ap30 ≥ 48 (Kp 5o)
 
+## Verdict — negative. Do not train a separate storm model.
+
+Measured on 23,514 validation anchors: the split plus a peak head raises the predicted storm
+peak from 43 % of observed to 82 % and cuts peak MAE from 45.70 to 22.78. **Almost all of that
+is bias removal, and bias removal is one free scalar.** Predicting a single constant — the
+observed median — for every storm anchor gives MAE 25.59. The trained pair of models earns
+2.8 ap beyond that. Correlation did not move at all (0.482 → 0.470), so no information was
+added; the curve is as flat as it started (sharpness 1.31 against the observed 2.72).
+
+The actionable finding is about the *pooled* model, not about splitting: **it is biased low on
+storms, and a scalar correction on its output recovers most of the gap without retraining
+anything.** Everything below is kept because the measurements are sound and the traps are worth
+not falling into twice — but read it with this verdict in hand.
+
+---
+
 **Nothing in `src/`, `configs/` or `scripts/` is touched.** A regime is a property of the target,
 known at training time, and table mode already reads its training anchors from a CSV — so the
 whole split is two index files plus a `train_index` override. The manuscript tree stays exactly
@@ -192,30 +208,57 @@ Both were the ap ladder in different disguises, and both are now guarded in code
   the trajectory test could (sharpness 2.73 against observed 2.59). Sampling trajectories
   **within** each branch is the natural next step and combines the two.
 
-## What the full visual pass shows — the 82 % is a mixture of two very different numbers
+## What the full visual pass shows — the gain is a constant in disguise
 
-All 23,514 validation anchors were rendered with
-`../analysis/plot_all_anchors.py` (pooled + both branches, each branch's peak head drawn as a
-level spanning the window) to
-`~/Projects/GeoIndex/results/plots_all_regime48ph/`. Reading the index that pass produced:
+All 23,514 validation anchors were rendered with `../analysis/plot_all_anchors.py` (pooled plus
+both branches, each branch's peak head drawn as a level spanning the window) to
+`~/Projects/GeoIndex/results/plots_all_regime48ph/`. Reading the index that pass produced turns
+the headline numbers over.
 
-| observed peak | n | observed | storm head | recovery |
-|---|---|---|---|---|
-| ≥ 100 | 736 | 160.1 | 76.9 | **48 %** |
-| 48–99 | 4,093 | 63.5 | 62.2 | **98 %** |
+**The head barely beats a constant.** On the 4,829 storm anchors:
 
-The headline "82 % of the observed storm peak" is not a uniform improvement. On moderate storms
-the head is essentially calibrated; on the events that matter operationally it is still damped by
-half. The aggregate hid this because the 48–99 band outnumbers the ≥ 100 band by 5.6 to 1.
+| predictor | peak MAE |
+|---|---|
+| pooled model, maximum of the curve | 45.70 |
+| **a single constant, the observed median** | **25.59** |
+| regime split + peak head | 22.78 |
 
-**The storm head is nearly a constant on quiet inputs.** Over the 18,685 quiet anchors it has
-mean 56.7 and standard deviation **3.8** (5–95 % spans 51–63); on storm anchors it has mean 64.4
-and sd 14.9. So "if a storm comes" says about 57 ap on a quiet day almost regardless of the
-input — it carries no information there, and its only honest use is behind a calibrated
-`P(storm|x)`. This is the caveat above, now measured rather than anticipated.
+45.70 → 25.59 is free — the pooled model was biased low and one scalar removes it. The trained
+models earn 2.8 ap on top of that.
 
-The quiet head has the mirror-image floor: on the 2,444 anchors whose observed peak is below 9 it
-averages 10.0, and its 5th percentile over all quiet anchors is 7.0.
+**The band recoveries are the same illusion.** An earlier version of this file reported 98 %
+recovery on the 48–99 band as if it were calibration.
+
+| observed peak | n | observed | storm head | recovery | head MAE | constant MAE | ρ in band |
+|---|---|---|---|---|---|---|---|
+| 48–99 | 4,093 | 63.5 | 62.2 | 98 % | 11.80 | 12.89 | 0.339 |
+| ≥ 100 | 736 | 160.1 | 76.9 | 48 % | — | — | 0.346 |
+
+A predictor pinned near a band's mean recovers ~100 % of that band by construction. The head
+beats the band constant by 1.1 ap. The 82 % aggregate is that near-constant weighted by a
+48–99 band that outnumbers the ≥ 100 band 5.6 to 1.
+
+**There is almost no dispersion to work with.**
+
+| | sd |
+|---|---|
+| observed peak, storm anchors | 41.2 |
+| storm head, storm anchors | 14.9 |
+| storm head, **quiet** anchors | **3.8** |
+
+A conditional mean satisfies `sigma_pred/sigma_obs = rho`. The measured ratio is 0.362 against
+`rho` 0.470, so the head does not even use the width its own correlation allows. On a quiet day
+"if a storm comes" answers about 57 ap almost regardless of the input — it carries no
+information there and is only honest behind a calibrated `P(storm|x)`.
+
+**It is not an under-training artefact.** All three runs early-stop at a comparable point —
+pooled best at epoch 5 of 15, quiet at 9 of 19, storm at 7 of 17 — so the storm branch is not
+short-changed relative to the pooled model it is being compared with.
+
+**And the tail has no data.** The 13,095 storm training anchors are 12 h windows that overlap;
+counted as episodes more than 24 h apart they are **239 independent storms**, and the subset
+reaching 100 ap is far smaller. The 48 % recovery above 100 ap is a sample-size limit, not a
+loss-function or architecture one.
 
 Navigation for the contact sheets (24 panels each, ordered by observed peak):
 
@@ -227,6 +270,34 @@ Navigation for the contact sheets (24 panels each, ordered by observed peak):
 | 448–878 | 9–22 ap |
 | 878–980 | < 9 ap |
 
-Sheet 1 is the April 2023 storm (observed 294) and is the clearest single picture of what is left:
-the storm head calls 60 against 294, and every branch curve is flat where the observation has a
-two-step structure.
+Sheet 1 is the April 2023 storm (observed 294): the storm head calls 60, and every branch curve
+is flat where the observation has a two-step structure.
+
+## The runs behind these numbers
+
+The peak-head code is not on `main` — it is branch `exploration/regime48-peakhead`, reproduced
+byte-for-byte by `../patches/01-model-and-config.patch` and `../patches/02-tests.patch` applied
+to the manuscript commit `e7697e8`. The peak head is independent of `regression_loss_type`, so
+the curve is scored exactly as the paper model scores it and the head is added alongside:
+
+```bash
+git checkout exploration/regime48-peakhead        # or: git apply ../patches/*.patch
+python exploration/2026-08/regime48/build_regime_indices.py
+
+for R in quiet storm; do
+  N=regime48ph_ap_in12h_out12h_gnn_transformer_$R
+  python scripts/train.py --config-name=server_ap +io=in12h_out12h +model=gnn_transformer \
+      data.timeseries.train_index=regime48_ap/train_index_$R.csv \
+      data.timeseries.validation_index=regime48_ap/validation_index_$R.csv \
+      training.peak_head.enabled=true experiment.name=$N
+  python scripts/validate.py --config-name=server_ap +io=in12h_out12h +model=gnn_transformer \
+      data.timeseries.train_index=regime48_ap/train_index_$R.csv \
+      experiment.name=$N validation.epoch=best validation.mcd_samples=0
+done
+
+python exploration/2026-08/regime48/score_regimes.py --stem regime48ph_ap_in12h_out12h_gnn_transformer
+```
+
+`training.peak_head.base_loss` was left at its config value; the training log records the
+per-lead loss (`solar_wind_weighted`) but not the head's, so treat the head loss as unpinned
+if these runs are ever reproduced.
