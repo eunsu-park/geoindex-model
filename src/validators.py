@@ -444,12 +444,6 @@ class Validator:
         self.device = device
         self.logger = logger
 
-        # Whether the model carries a separate peak head; when it does, validation asks for
-        # its scalar as well and writes it to the npz next to the curve. A validation-only
-        # config need not carry a `training` node at all, so reach for it defensively.
-        peak_cfg = getattr(getattr(config, 'training', None), 'peak_head', None)
-        self.peak_head_enabled = bool(peak_cfg is not None and getattr(peak_cfg, 'enabled', False))
-
         # Settings from config
         self.save_plots = getattr(config.validation, 'save_plots', True)
         self.save_npz = getattr(config.validation, 'save_npz', True)
@@ -509,7 +503,6 @@ class Validator:
         inputs = data_dict["inputs"].to(self.device)
         targets = data_dict["targets"].to(self.device)
 
-        peak_out = None
         with torch.no_grad():
             # Forward pass depends on model type
             if self.compute_alignment and self.model_type in ["fusion", "baseline"]:
@@ -519,10 +512,6 @@ class Validator:
                 cosine_sim = F.cosine_similarity(
                     feature_1, feature_2, dim=1
                 ).mean().item()
-            elif self.peak_head_enabled:
-                outputs, peak_out = self.model(inputs, sdo, return_features=False,
-                                               return_peak=True)
-                cosine_sim = None
             else:
                 outputs = self.model(inputs, sdo, return_features=False)
                 cosine_sim = None
@@ -552,11 +541,6 @@ class Validator:
 
         if cosine_sim is not None:
             result['cosine_sim'] = cosine_sim
-
-        # The peak head's scalar is a separate product from the curve, so it is saved
-        # alongside rather than folded into `predictions`.
-        if peak_out is not None:
-            result['peak_prediction'] = peak_out.cpu().numpy()
 
         # Fold MC-dropout uncertainty into the same pass. The deterministic `predictions`
         # above stay the headline (metrics are computed from them); the MCD stats are an
@@ -751,7 +735,6 @@ class Validator:
         predictions = batch_result['predictions']
 
         mcd = batch_result.get('mcd')
-        peak_pred = batch_result.get('peak_prediction')
 
         for i, file_name in enumerate(file_names):
             file_name_base = os.path.splitext(file_name)[0]
@@ -776,17 +759,6 @@ class Validator:
                 'input_variables': self.input_variables,
                 'target_variables': self.target_variables,
             }
-            # The peak head's scalar prediction of the window maximum, denormalized the same
-            # way as the curve. Saved separately because it is a separate product -- the curve
-            # answers "what shape", this answers "how high", and conflating them is what made
-            # PeakAugmentedLoss put a fake spike in the curve.
-            if peak_pred is not None:
-                pk = peak_pred[i].reshape(1, -1).copy()
-                if self.normalizer is not None:
-                    for var_idx, var_name in enumerate(self.target_variables):
-                        pk[:, var_idx] = self.normalizer.denormalize_omni(
-                            pk[:, var_idx], var_name)
-                arrays['peak_prediction'] = pk[0]
             # MC-dropout predictive interval (already denormalized), per-event slice.
             # mcd_mean/std/min/max/median + empirical 90% (q05/q95) and 95% (q025/q975)
             # bands so downstream can use a Gaussian or a distribution-free interval.

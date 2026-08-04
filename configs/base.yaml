@@ -392,64 +392,9 @@ model:
 # =============================================================================
 training:
   # Loss functions
-  # Options: mse, mae, huber, weighted_mse, solar_wind_weighted, pinball, lead_normalized,
-  #          exceedance_bce, peak_augmented
+  # Options: mse, mae, huber, weighted_mse, solar_wind_weighted
   regression_loss_type: "solar_wind_weighted"
   huber_delta: 10.0
-
-  # ---------------------------------------------------------------------------
-  # Peak Settings (regression_loss_type='peak_augmented')
-  # Adds a term comparing the maximum of the forecast window against the observed
-  # maximum, so the curve's peak is fitted as its own quantity rather than being
-  # whatever the maximum of 24 separately shrunk conditional means happens to be.
-  # soft_tau > 0 replaces the hard maximum with a log-sum-exp of that temperature.
-  # ---------------------------------------------------------------------------
-  peak:
-    base_loss: "mse"
-    weight: 1.0
-    soft_tau: 0.0
-
-  # ---------------------------------------------------------------------------
-  # Peak Head (independent of regression_loss_type)
-  # Adds a second output head predicting the window maximum as its own scalar,
-  # trained with its own loss on top of the per-lead loss. This is the corrected
-  # form of `peak_augmented`: deriving the peak from the same 24 curve outputs
-  # let the model satisfy the term by turning one output step into a maximum
-  # register (99.7 % of anchors peaked at exactly 11.0 h) instead of learning a
-  # taller storm. A separate scalar keeps the curve scored only as a curve.
-  # Only the gnn architectures carry this head; the others raise at build time.
-  # ---------------------------------------------------------------------------
-  peak_head:
-    enabled: false
-    base_loss: "mse"
-    weight: 1.0
-
-  # ---------------------------------------------------------------------------
-  # Exceedance Settings (regression_loss_type='exceedance_bce')
-  # Reads the output as the log-odds that the index exceeds `threshold` at each
-  # lead. Such a run emits probabilities, so the regression metrics in
-  # validation_results.txt do not apply to it -- score it with the warning tools.
-  # pos_weight: null derives the positive-class weight from the batch event rate.
-  # ---------------------------------------------------------------------------
-  exceedance:
-    threshold: 50.0
-    pos_weight: null
-
-  # ---------------------------------------------------------------------------
-  # Lead-Normalized Settings (regression_loss_type='lead_normalized')
-  # Divides each forecast lead's loss by a running estimate of its own magnitude
-  # so the far, less predictable leads stop dominating the gradient.
-  # ---------------------------------------------------------------------------
-  lead_normalized:
-    base_loss: "mse"
-    momentum: 0.05
-
-  # ---------------------------------------------------------------------------
-  # Pinball Settings (regression_loss_type='pinball')
-  # Asymmetric point loss: quantile > 0.5 penalizes under-prediction more.
-  # ---------------------------------------------------------------------------
-  pinball:
-    quantile: 0.75
 
   # Contrastive loss (only active when SDO modality is enabled)
   contrastive_loss_type: "consistency"

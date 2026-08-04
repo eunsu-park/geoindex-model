@@ -1,0 +1,511 @@
+diff --git a/tests/test_calibrate_warning.py b/tests/test_calibrate_warning.py
+new file mode 100644
+index 0000000..effa31b
+--- /dev/null
++++ b/tests/test_calibrate_warning.py
+@@ -0,0 +1,103 @@
++"""Unit tests for analysis/calibrate_warning.py."""
++
++import os
++import sys
++
++import numpy as np
++import pytest
++
++sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
++
++from analysis.calibrate_warning import (
++    auc,
++    contingency,
++    fit_threshold,
++    isotonic_apply,
++    isotonic_fit,
++)
++
++
++def noisy_scores(n=4000, seed=0):
++    """Scores that rank the event well but sit far below the event's own scale."""
++    rng = np.random.default_rng(seed)
++    label = rng.random(n) < 0.15
++    score = rng.normal(8, 4, n) + label * 9.0        # separated, but never near 50
++    return score, label
++
++
++class TestAuc:
++    def test_perfect_and_random_ranking(self):
++        label = np.array([False, False, True, True])
++        assert auc(np.array([1.0, 2.0, 3.0, 4.0]), label) == pytest.approx(1.0)
++        assert auc(np.array([4.0, 3.0, 2.0, 1.0]), label) == pytest.approx(0.0)
++
++    def test_ranking_survives_a_damped_scale(self):
++        """AUC is scale-free: shrinking every score leaves discrimination untouched."""
++        score, label = noisy_scores()
++        assert auc(score * 0.2, label) == pytest.approx(auc(score, label))
++
++
++class TestFitThreshold:
++    def test_budget_is_respected_on_the_fitting_data(self):
++        score, label = noisy_scores()
++        for budget in (0.2, 0.3, 0.5):
++            fit = fit_threshold(score, label, budget)
++            assert fit["attained"]
++            assert contingency(score >= fit["threshold"], label)["far"] <= budget + 1e-9
++
++    def test_lower_budget_gives_a_higher_threshold(self):
++        score, label = noisy_scores()
++        assert (fit_threshold(score, label, 0.2)["threshold"]
++                >= fit_threshold(score, label, 0.5)["threshold"])
++
++    def test_hss_optimal_beats_the_raw_index_scale(self):
++        """The point of the exercise: the index-scale threshold throws skill away."""
++        score, label = noisy_scores()
++        t = fit_threshold(score, label, None)["threshold"]
++        assert contingency(score >= t, label)["hss"] > contingency(score >= 50.0, label)["hss"]
++
++    def test_unattainable_budget_is_flagged_not_silently_met(self):
++        """A rare enough event has no threshold at a low false-alarm ratio; say so."""
++        rng = np.random.default_rng(3)
++        n = 20000
++        label = rng.random(n) < 0.004              # very rare
++        score = rng.normal(8, 4, n) + label * 3.0  # and barely separated
++        fit = fit_threshold(score, label, 0.05)
++        assert fit["attained"] is False
++        assert fit["fit_far"] > 0.05
++        # the fallback is still the strictest threshold on the grid, not a silent pass
++        assert contingency(score >= fit["threshold"], label)["far"] > 0.05
++
++
++class TestIsotonic:
++    def test_fit_is_monotone(self):
++        score, label = noisy_scores()
++        _, y = isotonic_fit(score, label)
++        assert np.all(np.diff(y) >= -1e-12)
++
++    def test_apply_is_clamped_and_monotone(self):
++        score, label = noisy_scores()
++        x, y = isotonic_fit(score, label)
++        probe = np.linspace(score.min() - 50, score.max() + 50, 400)
++        p = isotonic_apply(x, y, probe)
++        assert p.min() >= 0.0 and p.max() <= 1.0
++        assert np.all(np.diff(p) >= -1e-12)
++
++    def test_probabilities_track_the_base_rate(self):
++        score, label = noisy_scores()
++        x, y = isotonic_fit(score, label)
++        p = isotonic_apply(x, y, score)
++        assert p.mean() == pytest.approx(label.mean(), abs=0.02)
++
++    def test_beats_climatology_on_brier(self):
++        score, label = noisy_scores()
++        cut = len(label) // 2
++        x, y = isotonic_fit(score[:cut], label[:cut])
++        p = isotonic_apply(x, y, score[cut:])
++        brier = np.mean((p - label[cut:]) ** 2)
++        clim = np.mean((label[:cut].mean() - label[cut:]) ** 2)
++        assert brier < clim
++
++
++if __name__ == "__main__":
++    pytest.main([__file__, "-v"])
+diff --git a/tests/test_categorical.py b/tests/test_categorical.py
+new file mode 100644
+index 0000000..4d0bad2
+--- /dev/null
++++ b/tests/test_categorical.py
+@@ -0,0 +1,59 @@
++"""Unit tests for the contingency scoring in analysis/compare_loss_variants.py."""
++
++import os
++import sys
++
++import numpy as np
++import pytest
++
++sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
++
++from analysis.compare_loss_variants import contingency
++
++
++class TestContingency:
++    def test_perfect_forecast(self):
++        obs = np.array([10.0, 40.0, 80.0, 120.0])
++        c = contingency(obs.copy(), obs, 50.0)
++        assert (c["hits"], c["false_alarms"], c["misses"], c["correct_negatives"]) == (2, 0, 0, 2)
++        assert c["pod"] == 1.0
++        assert c["far"] == 0.0
++        assert c["csi"] == 1.0
++        assert c["bias"] == 1.0
++        assert c["hss"] == pytest.approx(1.0)
++
++    def test_forecast_that_never_fires(self):
++        """A fully damped forecast: no hits, no false alarms, HSS 0."""
++        obs = np.array([10.0, 40.0, 80.0, 120.0])
++        pred = np.zeros_like(obs)
++        c = contingency(pred, obs, 50.0)
++        assert (c["hits"], c["false_alarms"], c["misses"]) == (0, 0, 2)
++        assert c["pod"] == 0.0
++        assert c["bias"] == 0.0
++        assert c["hss"] == pytest.approx(0.0)
++        assert np.isnan(c["far"])            # FAR is undefined with no forecast events
++
++    def test_bias_separates_under_and_over_forecasting(self):
++        """Frequency bias is forecast events / observed events."""
++        obs = np.array([0.0, 0.0, 60.0, 60.0])
++        under = np.array([0.0, 0.0, 0.0, 60.0])
++        over = np.array([60.0, 60.0, 60.0, 60.0])
++        assert contingency(under, obs, 50.0)["bias"] == pytest.approx(0.5)
++        assert contingency(over, obs, 50.0)["bias"] == pytest.approx(2.0)
++
++    def test_threshold_is_inclusive_on_the_observation_side(self):
++        """A value exactly at the threshold counts as an event."""
++        obs = np.array([50.0])
++        assert contingency(np.array([50.0]), obs, 50.0)["hits"] == 1
++        assert contingency(np.array([49.9]), obs, 50.0)["misses"] == 1
++
++    def test_hss_is_zero_for_a_random_style_forecast(self):
++        """HSS measures skill over chance, so a forecast matching the base rate scores ~0."""
++        rng = np.random.default_rng(0)
++        obs = (rng.random(20000) < 0.1) * 100.0
++        pred = (rng.random(20000) < 0.1) * 100.0     # independent, same base rate
++        assert abs(contingency(pred, obs, 50.0)["hss"]) < 0.03
++
++
++if __name__ == "__main__":
++    pytest.main([__file__, "-v"])
+diff --git a/tests/test_losses.py b/tests/test_losses.py
+index 6872010..e42160f 100755
+--- a/tests/test_losses.py
++++ b/tests/test_losses.py
+@@ -13,6 +13,10 @@ from src.losses import (
+     MultiModalMSELoss,
+     GeneralWeightedMSELoss,
+     SolarWindWeightedLoss,
++    LeadNormalizedLoss,
++    ExceedanceBCELoss,
++    PeakAugmentedLoss,
++    PeakHeadLoss,
+ )
+ 
+ 
+@@ -561,5 +565,232 @@ class TestSolarWindWeightedLoss:
+         ), f"Weight should be 4.0 (G2 tier), got {weight_with[0, 0, 0]}"
+ 
+ 
++class TestLeadNormalizedLoss:
++    """Tests for the per-lead normalized loss."""
++
++    def _errors(self, seq_len=4, batch=32, scales=None):
++        """Predictions whose per-lead error scale is set by `scales`."""
++        torch.manual_seed(0)
++        target = torch.zeros(batch, seq_len, 1)
++        pred = torch.randn(batch, seq_len, 1)
++        for j, s in enumerate(scales):
++            pred[:, j, 0] *= s
++        return pred, target
++
++    def test_far_lead_stops_dominating(self):
++        """A lead with a 10x larger residual must not carry 100x the weight."""
++        pred, target = self._errors(scales=[1.0, 1.0, 1.0, 10.0])
++        plain = ((pred - target) ** 2)
++        per_lead_plain = plain.mean(dim=(0, 2))
++        share_plain = per_lead_plain[3] / per_lead_plain.sum()
++
++        loss_fn = LeadNormalizedLoss(base_loss_type='mse', momentum=1.0)
++        loss_fn(pred, target)                      # first call seeds the running scale
++        weights = 1.0 / loss_fn.running.clamp_min(1e-8)
++        weights = weights / weights.mean()
++        share_norm = (per_lead_plain[3] * weights[3]) / (per_lead_plain * weights).sum()
++
++        assert share_plain > 0.9                   # unweighted: the far lead is everything
++        assert share_norm == pytest.approx(0.25, abs=0.02)   # normalized: equal share
++
++    def test_reported_value_is_the_harmonic_mean(self):
++        """Mean-1 weights make the reported loss the harmonic mean over leads.
++
++        It stays on the same scale as the plain loss (never larger, and equal when the
++        per-lead losses are identical), which is what keeps LR and early-stopping
++        thresholds meaningful.
++        """
++        pred, target = self._errors(scales=[1.0, 1.0, 1.0, 1.0])
++        per_lead = ((pred - target) ** 2).mean(dim=(0, 2))
++        harmonic = 1.0 / (1.0 / per_lead).mean()
++        value = LeadNormalizedLoss(base_loss_type='mse', momentum=1.0)(pred, target).item()
++        assert value == pytest.approx(harmonic.item(), rel=1e-5)
++        assert value <= per_lead.mean().item() + 1e-6
++
++    def test_running_scale_frozen_without_grad(self):
++        """Validation passes (no_grad) must not move the running estimate."""
++        pred, target = self._errors(scales=[1.0, 1.0, 1.0, 10.0])
++        loss_fn = LeadNormalizedLoss(base_loss_type='mse', momentum=0.5)
++        loss_fn(pred, target)
++        before = loss_fn.running.clone()
++        with torch.no_grad():
++            loss_fn(pred * 5.0, target)
++        assert torch.equal(loss_fn.running, before)
++
++    def test_mae_base_and_gradients(self):
++        """The MAE base reduces to a finite, differentiable scalar."""
++        pred, target = self._errors(scales=[1.0, 2.0, 3.0, 4.0])
++        pred.requires_grad_(True)
++        loss = LeadNormalizedLoss(base_loss_type='mae', momentum=1.0)(pred, target)
++        loss.backward()
++        assert torch.isfinite(loss)
++        assert pred.grad is not None and torch.isfinite(pred.grad).all()
++
++
++class TestExceedanceBCELoss:
++    """Tests for the per-lead exceedance-probability loss."""
++
++    STATS = {"log1p_mean": 0.0, "log1p_std": 1.0}
++
++    def _normalized(self, raw):
++        """Normalized targets whose raw values are `raw` under log1p_zscore."""
++        return torch.log1p(torch.tensor(raw, dtype=torch.float32)).view(1, -1, 1)
++
++    def test_threshold_is_applied_in_raw_units(self):
++        """A target is an event by its raw value, not its normalized one."""
++        loss_fn = ExceedanceBCELoss(threshold=50.0, norm_stats=self.STATS, pos_weight=1.0)
++        target = self._normalized([10.0, 49.0, 51.0, 200.0])
++        confident = torch.tensor([-9.0, -9.0, 9.0, 9.0]).view(1, -1, 1)  # matches 0,0,1,1
++        wrong = -confident
++        assert loss_fn(confident, target).item() < 1e-3
++        assert loss_fn(wrong, target).item() > 5.0
++
++    def test_zscore_normalization_path(self):
++        loss_fn = ExceedanceBCELoss(threshold=50.0, norm_method="zscore",
++                                    norm_stats={"mean": 20.0, "std": 10.0}, pos_weight=1.0)
++        target = torch.tensor([0.0, 4.0]).view(1, -1, 1)     # raw 20 and 60
++        confident = torch.tensor([-9.0, 9.0]).view(1, -1, 1)
++        assert loss_fn(confident, target).item() < 1e-3
++
++    def test_rare_events_are_upweighted_by_default(self):
++        """With pos_weight=None the batch event rate sets the positive weight."""
++        raw = [1.0] * 99 + [200.0]                            # 1% events
++        target = self._normalized(raw)
++        logits = torch.zeros(1, len(raw), 1)                  # p = 0.5 everywhere
++        auto = ExceedanceBCELoss(threshold=50.0, norm_stats=self.STATS)(logits, target)
++        flat = ExceedanceBCELoss(threshold=50.0, norm_stats=self.STATS,
++                                 pos_weight=1.0)(logits, target)
++        assert auto.item() > flat.item()
++
++    def test_gradients_are_finite(self):
++        target = self._normalized([1.0, 10.0, 60.0, 150.0])
++        logits = torch.randn(1, 4, 1, requires_grad=True)
++        ExceedanceBCELoss(threshold=50.0, norm_stats=self.STATS)(logits, target).backward()
++        assert logits.grad is not None and torch.isfinite(logits.grad).all()
++
++    def test_all_quiet_batch_does_not_explode(self):
++        """A batch with no events must not produce an infinite positive weight."""
++        target = self._normalized([1.0, 2.0, 3.0, 4.0])
++        logits = torch.zeros(1, 4, 1)
++        value = ExceedanceBCELoss(threshold=50.0, norm_stats=self.STATS)(logits, target)
++        assert torch.isfinite(value)
++
++
++class TestPeakAugmentedLoss:
++    """Tests for the loss that supervises the peak of the forecast window."""
++
++    # Same total squared error, different peak error: `under` misses only the peak, `shifted`
++    # carries its whole error on a quiet lead and gets the peak exactly right.
++    TARGET = torch.tensor([0.0, 0.0, 10.0, 0.0]).view(1, 4, 1)
++    UNDER = torch.tensor([0.0, 0.0, 5.0, 0.0]).view(1, 4, 1)
++    SHIFTED = torch.tensor([5.0, 0.0, 10.0, 0.0]).view(1, 4, 1)
++
++    def test_weight_zero_reduces_to_the_base_loss(self):
++        """Without the peak term the two predictions above are indistinguishable."""
++        loss_fn = PeakAugmentedLoss(base_loss_type='mse', weight=0.0)
++        plain = ((self.UNDER - self.TARGET) ** 2).mean()
++        assert loss_fn(self.UNDER, self.TARGET).item() == pytest.approx(plain.item())
++        assert loss_fn(self.UNDER, self.TARGET).item() == pytest.approx(
++            loss_fn(self.SHIFTED, self.TARGET).item())
++
++    def test_peak_term_separates_a_missed_peak_from_a_misplaced_error(self):
++        """The whole point: an under-called peak must cost more than an equal-sized miss
++        somewhere flat."""
++        loss_fn = PeakAugmentedLoss(base_loss_type='mse', weight=1.0)
++        assert loss_fn(self.UNDER, self.TARGET).item() > loss_fn(self.SHIFTED, self.TARGET).item()
++
++    def test_gradient_pushes_the_peak_up(self):
++        """An under-called peak gets a gradient that raises it, and a hard max sends the peak
++        term's share to that lead alone."""
++        pred = self.UNDER.clone().requires_grad_(True)
++        PeakAugmentedLoss(base_loss_type='mse', weight=1.0)(pred, self.TARGET).backward()
++        g = pred.grad.view(-1)
++        assert g[2] < 0                                   # raise the predicted peak
++        assert torch.allclose(g[[0, 1, 3]], torch.zeros(3))
++
++    def test_soft_tau_spreads_the_gradient_over_the_leads_near_the_peak(self):
++        """With log-sum-exp every lead gets a share, weighted toward the largest."""
++        pred = torch.tensor([0.0, 4.0, 5.0, 0.0]).view(1, 4, 1).requires_grad_(True)
++        PeakAugmentedLoss(base_loss_type='mse', weight=1.0, soft_tau=1.0)(
++            pred, self.TARGET).backward()
++        g = pred.grad.view(-1)
++        assert g[1] < 0 and g[2] < 0                      # both near-peak leads are raised
++        assert abs(g[2]) > abs(g[1])                      # the largest lead gets the most
++
++    def test_soft_max_converges_to_the_hard_max(self):
++        """log-sum-exp overestimates the max by at most tau*log(n_leads), so a small tau is a
++        drop-in for amax."""
++        x = torch.tensor([1.0, 7.0, 3.0, 2.0]).view(1, 4, 1)
++        hard = PeakAugmentedLoss(soft_tau=0.0)._peak(x)
++        loose = PeakAugmentedLoss(soft_tau=1.0)._peak(x)
++        tight = PeakAugmentedLoss(soft_tau=0.01)._peak(x)
++        assert hard.item() == pytest.approx(7.0)
++        assert loose.item() > hard.item()
++        assert loose.item() <= hard.item() + np.log(4) + 1e-6
++        assert tight.item() == pytest.approx(7.0, abs=1e-3)
++
++    @pytest.mark.parametrize("base", ["mse", "mae", "huber"])
++    def test_every_base_loss_is_finite_and_differentiable(self, base):
++        torch.manual_seed(0)
++        pred = torch.randn(8, 24, 1, requires_grad=True)
++        target = torch.randn(8, 24, 1)
++        loss = PeakAugmentedLoss(base_loss_type=base, weight=1.0, huber_delta=1.0)(pred, target)
++        loss.backward()
++        assert torch.isfinite(loss)
++        assert pred.grad is not None and torch.isfinite(pred.grad).all()
++
++
++class TestPeakHeadLoss:
++    """Tests for the scalar peak head's loss."""
++
++    TARGET = torch.tensor([0.0, 3.0, 10.0, 4.0]).view(1, 4, 1)
++
++    def test_scores_against_the_observed_block_maximum(self):
++        """Only the target is reduced; the prediction is already a scalar."""
++        loss_fn = PeakHeadLoss(base_loss_type='mse')
++        exact = torch.tensor([[10.0]])
++        assert loss_fn(exact, self.TARGET).item() == pytest.approx(0.0)
++        assert loss_fn(torch.tensor([[7.0]]), self.TARGET).item() == pytest.approx(9.0)
++
++    def test_accepts_a_squeezable_middle_axis(self):
++        """A head that emits (batch, 1, feature) must score the same as (batch, feature)."""
++        loss_fn = PeakHeadLoss(base_loss_type='mae')
++        flat = loss_fn(torch.tensor([[6.0]]), self.TARGET)
++        with_axis = loss_fn(torch.tensor([[[6.0]]]), self.TARGET)
++        assert flat.item() == pytest.approx(with_axis.item())
++        assert flat.item() == pytest.approx(4.0)
++
++    def test_curve_shape_cannot_influence_it(self):
++        """Two curves with the same maximum are the same target, whatever their shape.
++
++        This is the property PeakAugmentedLoss lacked: there, the peak term reached back into
++        the 24 curve outputs and the model answered by spiking one of them.
++        """
++        loss_fn = PeakHeadLoss(base_loss_type='mse')
++        spiky = torch.tensor([0.0, 0.0, 10.0, 0.0]).view(1, 4, 1)
++        broad = torch.tensor([9.0, 9.5, 10.0, 9.8]).view(1, 4, 1)
++        pred = torch.tensor([[8.0]])
++        assert loss_fn(pred, spiky).item() == pytest.approx(loss_fn(pred, broad).item())
++
++    @pytest.mark.parametrize("base", ["mse", "mae", "huber"])
++    def test_every_base_loss_is_finite_and_differentiable(self, base):
++        torch.manual_seed(0)
++        pred = torch.randn(8, 1, requires_grad=True)
++        target = torch.randn(8, 24, 1)
++        loss = PeakHeadLoss(base_loss_type=base, huber_delta=1.0)(pred, target)
++        loss.backward()
++        assert torch.isfinite(loss)
++        assert pred.grad is not None and torch.isfinite(pred.grad).all()
++
++    def test_gradient_reaches_only_the_peak_head(self):
++        """The curve must receive nothing from this term -- that is the entire point."""
++        curve = torch.randn(4, 24, 1, requires_grad=True)
++        peak = torch.randn(4, 1, requires_grad=True)
++        target = torch.randn(4, 24, 1)
++        PeakHeadLoss()(peak, target).backward()
++        assert curve.grad is None
++        assert peak.grad is not None and (peak.grad.abs() > 0).any()
++
++
+ if __name__ == "__main__":
+     pytest.main([__file__, "-v"])
+diff --git a/tests/test_trainers.py b/tests/test_trainers.py
+index 0fa4472..1371081 100644
+--- a/tests/test_trainers.py
++++ b/tests/test_trainers.py
+@@ -2,6 +2,8 @@
+ 
+ import torch
+ import numpy as np
++import copy
++
+ import pytest
+ 
+ from src.trainers import MetricsTracker, CheckpointManager, EarlyStopping
+@@ -218,3 +220,75 @@ class TestEarlyStopping:
+ 
+         es.restore_best_model(model)
+         assert torch.allclose(model.weight, torch.ones_like(model.weight))
++
++
++class TestPeakHeadInTraining:
++    """The peak head's train step: it must add a term without disturbing the existing path.
++
++    The peak head exists because the earlier attempt -- deriving the peak from the same 24
++    curve outputs -- was satisfied by turning one output step into a maximum register rather
++    than by learning a taller storm. These tests pin the two properties that prevent a repeat:
++    the head is genuinely separate, and it is off unless asked for.
++    """
++
++    @staticmethod
++    def _config(minimal_config, enabled, **peak):
++        cfg = copy.deepcopy(minimal_config)
++        cfg.model.model_type = 'gnn'
++        cfg.training.huber_delta = 10.0
++        cfg.training.lambda_contrastive = 0.0
++        cfg.training.gradient_clip_max_norm = 1.0
++        cfg.training.peak_head = {'enabled': enabled, 'base_loss': 'mse', 'weight': 1.0}
++        cfg.training.peak_head.update(peak)
++        return cfg
++
++    @staticmethod
++    def _model(peak_head):
++        from src.networks.gnn import GNNOnlyModel
++        return GNNOnlyModel(
++            num_input_variables=2, input_sequence_length=48,
++            num_target_variables=1, target_sequence_length=24,
++            d_model=32, gnn_group_sizes=[1, 1], gnn_num_nodes=2,
++            transformer_nhead=2, transformer_num_layers=1,
++            transformer_dim_feedforward=64, peak_head=peak_head)
++
++    def _trainer(self, cfg, model):
++        from src.trainers import Trainer
++        return Trainer(config=cfg, model=model,
++                       optimizer=torch.optim.Adam(model.parameters(), lr=1e-3),
++                       scheduler=None, criterion=torch.nn.MSELoss(),
++                       contrastive_criterion=None, device=torch.device('cpu'))
++
++    def test_disabled_by_default_leaves_the_step_unchanged(self, minimal_config, dummy_batch):
++        """A model without the head must train exactly as before."""
++        cfg = self._config(minimal_config, enabled=False)
++        trainer = self._trainer(cfg, self._model(peak_head=False))
++        assert trainer.peak_criterion is None and trainer.lambda_peak == 0.0
++        assert torch.isfinite(torch.tensor(trainer.train_step(dummy_batch)['loss']))
++
++    def test_enabled_step_runs_and_trains_the_head(self, minimal_config, dummy_batch):
++        """The step completes and the peak head's weights actually receive gradient."""
++        cfg = self._config(minimal_config, enabled=True)
++        model = self._model(peak_head=True)
++        before = model.peak_head[0].weight.detach().clone()
++        result = self._trainer(cfg, model).train_step(dummy_batch)
++        assert torch.isfinite(torch.tensor(result['loss']))
++        assert not torch.equal(before, model.peak_head[0].weight.detach())
++
++    def test_the_peak_term_is_actually_added(self, minimal_config, dummy_batch):
++        """Weight 0 and weight 1 must give different totals on identical weights."""
++        losses = []
++        for w in (0.0, 1.0):
++            torch.manual_seed(7)
++            cfg = self._config(minimal_config, enabled=True, weight=w)
++            losses.append(self._trainer(cfg, self._model(peak_head=True))
++                          .train_step(dummy_batch)['loss'])
++        assert losses[1] != pytest.approx(losses[0])
++
++    def test_wrong_architecture_is_refused_at_construction(self, minimal_config):
++        """A non-gnn model would otherwise fail with an unexpected-keyword error mid-forward."""
++        from src.losses import create_peak_criterion
++        cfg = self._config(minimal_config, enabled=True)
++        cfg.model.model_type = 'transformer'
++        with pytest.raises(ValueError, match="does not build a peak head"):
++            create_peak_criterion(cfg)

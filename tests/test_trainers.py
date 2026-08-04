@@ -2,8 +2,6 @@
 
 import torch
 import numpy as np
-import copy
-
 import pytest
 
 from src.trainers import MetricsTracker, CheckpointManager, EarlyStopping
@@ -220,75 +218,3 @@ class TestEarlyStopping:
 
         es.restore_best_model(model)
         assert torch.allclose(model.weight, torch.ones_like(model.weight))
-
-
-class TestPeakHeadInTraining:
-    """The peak head's train step: it must add a term without disturbing the existing path.
-
-    The peak head exists because the earlier attempt -- deriving the peak from the same 24
-    curve outputs -- was satisfied by turning one output step into a maximum register rather
-    than by learning a taller storm. These tests pin the two properties that prevent a repeat:
-    the head is genuinely separate, and it is off unless asked for.
-    """
-
-    @staticmethod
-    def _config(minimal_config, enabled, **peak):
-        cfg = copy.deepcopy(minimal_config)
-        cfg.model.model_type = 'gnn'
-        cfg.training.huber_delta = 10.0
-        cfg.training.lambda_contrastive = 0.0
-        cfg.training.gradient_clip_max_norm = 1.0
-        cfg.training.peak_head = {'enabled': enabled, 'base_loss': 'mse', 'weight': 1.0}
-        cfg.training.peak_head.update(peak)
-        return cfg
-
-    @staticmethod
-    def _model(peak_head):
-        from src.networks.gnn import GNNOnlyModel
-        return GNNOnlyModel(
-            num_input_variables=2, input_sequence_length=48,
-            num_target_variables=1, target_sequence_length=24,
-            d_model=32, gnn_group_sizes=[1, 1], gnn_num_nodes=2,
-            transformer_nhead=2, transformer_num_layers=1,
-            transformer_dim_feedforward=64, peak_head=peak_head)
-
-    def _trainer(self, cfg, model):
-        from src.trainers import Trainer
-        return Trainer(config=cfg, model=model,
-                       optimizer=torch.optim.Adam(model.parameters(), lr=1e-3),
-                       scheduler=None, criterion=torch.nn.MSELoss(),
-                       contrastive_criterion=None, device=torch.device('cpu'))
-
-    def test_disabled_by_default_leaves_the_step_unchanged(self, minimal_config, dummy_batch):
-        """A model without the head must train exactly as before."""
-        cfg = self._config(minimal_config, enabled=False)
-        trainer = self._trainer(cfg, self._model(peak_head=False))
-        assert trainer.peak_criterion is None and trainer.lambda_peak == 0.0
-        assert torch.isfinite(torch.tensor(trainer.train_step(dummy_batch)['loss']))
-
-    def test_enabled_step_runs_and_trains_the_head(self, minimal_config, dummy_batch):
-        """The step completes and the peak head's weights actually receive gradient."""
-        cfg = self._config(minimal_config, enabled=True)
-        model = self._model(peak_head=True)
-        before = model.peak_head[0].weight.detach().clone()
-        result = self._trainer(cfg, model).train_step(dummy_batch)
-        assert torch.isfinite(torch.tensor(result['loss']))
-        assert not torch.equal(before, model.peak_head[0].weight.detach())
-
-    def test_the_peak_term_is_actually_added(self, minimal_config, dummy_batch):
-        """Weight 0 and weight 1 must give different totals on identical weights."""
-        losses = []
-        for w in (0.0, 1.0):
-            torch.manual_seed(7)
-            cfg = self._config(minimal_config, enabled=True, weight=w)
-            losses.append(self._trainer(cfg, self._model(peak_head=True))
-                          .train_step(dummy_batch)['loss'])
-        assert losses[1] != pytest.approx(losses[0])
-
-    def test_wrong_architecture_is_refused_at_construction(self, minimal_config):
-        """A non-gnn model would otherwise fail with an unexpected-keyword error mid-forward."""
-        from src.losses import create_peak_criterion
-        cfg = self._config(minimal_config, enabled=True)
-        cfg.model.model_type = 'transformer'
-        with pytest.raises(ValueError, match="does not build a peak head"):
-            create_peak_criterion(cfg)
