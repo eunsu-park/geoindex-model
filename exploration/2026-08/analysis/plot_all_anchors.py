@@ -100,7 +100,7 @@ def draw(ax, hist, true, preds, labels, tvar, title, compact=False, heads=None):
             ax.axhline(level, color=PERS, lw=.7, ls=style, alpha=.7)
     ax.set_xlim(t_hist[0], t_out[-1])
     ax.set_ylim(0, max(top * 1.12, 12))
-    ax.set_title(title, fontsize=8 if compact else 9.5, loc="left", color=INK)
+    ax.set_title(title, fontsize=6.5 if compact else 9.5, loc="left", color=INK)
     ax.tick_params(labelsize=6.5 if compact else 8, colors="#4e545e")
     for s in ("top", "right"):
         ax.spines[s].set_visible(False)
@@ -109,6 +109,19 @@ def draw(ax, hist, true, preds, labels, tvar, title, compact=False, heads=None):
     if not compact:
         ax.set_xlabel("hours from the anchor", fontsize=8, color="#4e545e")
         ax.set_ylabel(tvar, fontsize=8, color="#4e545e")
+
+
+def _compact_title(stamp, true, preds, labels, heads):
+    """A sheet packs three panels per row, so the full title collides with its neighbour."""
+    at = (int(true.argmax()) + 1) * STEP_H
+    vals = []
+    for i, (p, lab) in enumerate(zip(preds, labels)):
+        h = heads[i] if heads is not None else None
+        v = h if h is not None and np.isfinite(h) else p.max()
+        vals.append(f"{lab[0].upper()}{v:.0f}")
+    # The sheets are ordered by observed peak, so they mix years -- keep YY.
+    return (f"{stamp[2:4]}-{stamp[4:6]}-{stamp[6:8]} {stamp[8:10]}:{stamp[10:12]}  "
+            f"obs {true.max():.0f}@{at:.1f}h  " + " ".join(vals))
 
 
 def _title(stamp, true, preds, labels, heads=None):
@@ -215,7 +228,7 @@ def main() -> None:
             for ax, i in zip(axes, chunk):
                 hd = [None if h is None else float(h[i]) for h in heads]
                 draw(ax, hist[i], true[i], [p[i] for p in preds], labels, tvar,
-                     _title(anchors[i], true[i], [p[i] for p in preds], labels, hd),
+                     _compact_title(anchors[i], true[i], [p[i] for p in preds], labels, hd),
                      compact=True, heads=hd)
             fig.tight_layout()
             fig.savefig(os.path.join(sheet_dir, f"sheet_{s:04d}.png"), dpi=80)
