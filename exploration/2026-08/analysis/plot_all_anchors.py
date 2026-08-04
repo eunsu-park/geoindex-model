@@ -42,7 +42,7 @@ STEP_H = 0.5
 def load_run(results_dir: str, run: str) -> dict:
     """Read every stored sample of one validation archive."""
     path = os.path.join(results_dir, run, "validation", "best", "npz.zip")
-    anchors, true, pred, inputs, ivars, tvar = [], [], [], [], None, None
+    anchors, true, pred, inputs, head, ivars, tvar = [], [], [], [], [], None, None
     with zipfile.ZipFile(path) as z:
         for name in sorted(n for n in z.namelist() if n.endswith(".npz")):
             d = np.load(io.BytesIO(z.read(name)), allow_pickle=True)
@@ -53,15 +53,18 @@ def load_run(results_dir: str, run: str) -> dict:
             true.append(np.asarray(d["targets"])[:, 0])
             pred.append(np.asarray(d["predictions"])[:, 0])
             inputs.append(np.asarray(d["inputs"])[:, ivars.index(tvar)])
+            if "peak_prediction" in d:
+                head.append(float(np.asarray(d["peak_prediction"]).ravel()[0]))
     return {"anchor": np.asarray(anchors), "true": np.asarray(true),
-            "pred": np.asarray(pred), "hist": np.asarray(inputs), "tvar": tvar}
+            "pred": np.asarray(pred), "hist": np.asarray(inputs), "tvar": tvar,
+            "head": np.asarray(head) if head else None}
 
 
 def _fmt_anchor(stamp: str) -> str:
     return f"{stamp[:4]}-{stamp[4:6]}-{stamp[6:8]} {stamp[8:10]}:{stamp[10:12]} UTC"
 
 
-def draw(ax, hist, true, preds, labels, tvar, title, compact=False):
+def draw(ax, hist, true, preds, labels, tvar, title, compact=False, heads=None):
     """One anchor: input history, observation, and every run's forecast on shared axes."""
     n_in, n_out = len(hist), len(true)
     t_hist = np.arange(-n_in, 0) * STEP_H + STEP_H
@@ -76,8 +79,22 @@ def draw(ax, hist, true, preds, labels, tvar, title, compact=False):
         ax.plot(np.r_[t_hist[-1], t_out], np.r_[hist[-1], p],
                 color=RUN_COLOURS[i % len(RUN_COLOURS)], lw=1.6, label=lab)
 
+    # A run with a peak head states a window maximum and no time, so it is drawn as a level
+    # spanning the window rather than as a point on the curve.
+    if heads is not None:
+        for i, h in enumerate(heads):
+            if h is None or not np.isfinite(h):
+                continue
+            ax.plot([0, t_out[-1]], [h, h], color=RUN_COLOURS[i % len(RUN_COLOURS)],
+                    lw=1.5, ls=(0, (6, 3)), alpha=.9,
+                    label=f"{labels[i]} peak" if not compact else None)
+
     ax.axvline(0, color=INK, lw=.8, alpha=.35)
     top = max(true.max(), hist.max(), max(p.max() for p in preds)) if preds else true.max()
+    if heads is not None:
+        finite = [h for h in heads if h is not None and np.isfinite(h)]
+        if finite:
+            top = max(top, max(finite))
     for level, style in ((50, (0, (3, 3))), (100, (0, (5, 2)))):
         if level < top * 1.15:
             ax.axhline(level, color=PERS, lw=.7, ls=style, alpha=.7)
@@ -94,22 +111,26 @@ def draw(ax, hist, true, preds, labels, tvar, title, compact=False):
         ax.set_ylabel(tvar, fontsize=8, color="#4e545e")
 
 
-def _title(stamp, true, preds, labels):
+def _title(stamp, true, preds, labels, heads=None):
     obs_max = true.max()
     at = (int(true.argmax()) + 1) * STEP_H
     parts = [f"{_fmt_anchor(stamp)}", f"obs peak {obs_max:.0f} @+{at:.1f}h"]
-    parts += [f"{lab} {p.max():.0f}" for p, lab in zip(preds, labels)]
+    for i, (p, lab) in enumerate(zip(preds, labels)):
+        h = heads[i] if heads is not None else None
+        parts.append(f"{lab} {h:.0f}" if h is not None and np.isfinite(h)
+                     else f"{lab} {p.max():.0f}")
     return "  ·  ".join(parts)
 
 
 def render_one(args):
     """Worker: draw and save a single anchor panel."""
-    (stamp, hist, true, preds, labels, tvar, out_dir, dpi) = args
+    (stamp, hist, true, preds, labels, tvar, out_dir, dpi, heads) = args
     month_dir = os.path.join(out_dir, "plots", stamp[:6])
     os.makedirs(month_dir, exist_ok=True)
     fig, ax = plt.subplots(figsize=(7.2, 3.0))
-    draw(ax, hist, true, preds, labels, tvar, _title(stamp, true, preds, labels))
-    ax.legend(fontsize=7, frameon=False, loc="upper left", ncol=4)
+    draw(ax, hist, true, preds, labels, tvar,
+         _title(stamp, true, preds, labels, heads), heads=heads)
+    ax.legend(fontsize=6.5, frameon=False, loc="upper left", ncol=3)
     fig.tight_layout()
     fig.savefig(os.path.join(month_dir, f"{stamp}.png"), dpi=dpi)
     plt.close(fig)
@@ -142,6 +163,7 @@ def main() -> None:
     anchors, true, hist = base["anchor"], base["true"], base["hist"]
     labels = [lab for lab, _ in runs]
     preds = [r["pred"] for _, r in runs]
+    heads = [r.get("head") for _, r in runs]
     tvar = base["tvar"]
     print(f"{len(anchors)} anchors, {len(runs)} runs: {', '.join(labels)}")
 
@@ -157,7 +179,8 @@ def main() -> None:
         for rank, i in enumerate(order, 1):
             row = [rank, anchors[i], f"{obs_max[i]:.0f}",
                    f"{(int(true[i].argmax())+1)*STEP_H:.1f}", f"{hist[i][-1]:.0f}"]
-            row += [f"{p[i].max():.1f}" for p in preds]
+            row += [f"{(h[i] if h is not None else p[i].max()):.1f}"
+                    for p, h in zip(preds, heads)]
             row += [f"{np.abs(p[i]-true[i]).mean():.2f}" for p in preds]
             fp.write(",".join(str(v) for v in row) + "\n")
     print(f"wrote {idx_path}")
@@ -165,7 +188,8 @@ def main() -> None:
     selected = order[:args.limit] if args.limit else order
     if not args.sheets_only:
         jobs = [(anchors[i], hist[i], true[i], [p[i] for p in preds], labels, tvar,
-                 out_dir, args.dpi) for i in selected]
+                 out_dir, args.dpi,
+                 [None if h is None else float(h[i]) for h in heads]) for i in selected]
         print(f"rendering {len(jobs)} panels with {args.workers} workers ...")
         done = 0
         with ProcessPoolExecutor(max_workers=args.workers) as ex:
@@ -189,8 +213,10 @@ def main() -> None:
             for ax in axes[len(chunk):]:
                 ax.axis("off")
             for ax, i in zip(axes, chunk):
+                hd = [None if h is None else float(h[i]) for h in heads]
                 draw(ax, hist[i], true[i], [p[i] for p in preds], labels, tvar,
-                     _title(anchors[i], true[i], [p[i] for p in preds], labels), compact=True)
+                     _title(anchors[i], true[i], [p[i] for p in preds], labels, hd),
+                     compact=True, heads=hd)
             fig.tight_layout()
             fig.savefig(os.path.join(sheet_dir, f"sheet_{s:04d}.png"), dpi=80)
             plt.close(fig)
