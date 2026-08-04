@@ -23,9 +23,12 @@ Note it is "Kp 5o", not "the G1 threshold" -- G1 is Kp 5, which spans ap 39-56. 
 mislabelled the G scale once already; the docs should say Kp 5o.
 
 Both regimes share the pooled normalization statistics (`table_stats_ap.pkl`), so the two
-models see identically scaled inputs and their outputs are directly comparable. Validation stays
-the full index for both, so each model is scored on everything and the branches are sliced
-afterwards.
+models see identically scaled inputs and their outputs are directly comparable.
+
+Validation is split too, and that split matters: training uses its validation set for early
+stopping and checkpoint selection, so a branch model told to validate on the full set is
+selected on a distribution it was never trained for. Train on the branch validation index, then
+run validate.py again with the FULL index to score.
 
 Usage:
     python build_regime_indices.py                       # writes to the data root
@@ -49,6 +52,7 @@ def main() -> None:
     ap_.add_argument("--data-root", default="~/Projects/GeoIndex/datasets")
     ap_.add_argument("--table", default="data.parquet")
     ap_.add_argument("--source-index", default="total_ap/train_index.csv")
+    ap_.add_argument("--source-validation-index", default="total_ap/validation_index.csv")
     ap_.add_argument("--out-dir", default="regime48_ap")
     ap_.add_argument("--threshold", type=float, default=48.0)
     ap_.add_argument("--target", default="ap30")
@@ -78,23 +82,36 @@ def main() -> None:
     peak = np.lib.stride_tricks.sliding_window_view(values, args.out_steps)[:n_a].max(axis=1)
     peak_of = pd.Series(peak, index=grid[:n_a])
 
-    src = pd.read_csv(os.path.join(root, args.source_index))
-    src["datetime"] = pd.to_datetime(src["datetime"])
-    src["peak"] = src["datetime"].map(peak_of)
-    missing = src["peak"].isna().sum()
-    if missing:
-        print(f"note: {missing} anchors have no full window in the table and are dropped")
-        src = src.dropna(subset=["peak"])
+    def split(source, kind):
+        df_ = pd.read_csv(os.path.join(root, source))
+        df_["datetime"] = pd.to_datetime(df_["datetime"])
+        df_["peak"] = df_["datetime"].map(peak_of)
+        missing = int(df_["peak"].isna().sum())
+        if missing:
+            print(f"note: {missing} {kind} anchors have no full window and are dropped")
+            df_ = df_.dropna(subset=["peak"])
+        storm = df_["peak"] >= args.threshold
+        for name, sel in (("storm", storm), ("quiet", ~storm)):
+            path = os.path.join(out_dir, f"{kind}_index_{name}.csv")
+            df_.loc[sel, ["datetime", "label"]].to_csv(path, index=False)
+            print(f"  {kind:10s} {name:6s} {int(sel.sum()):8,d} "
+                  f"({100*sel.mean():5.1f} %)  -> {os.path.basename(path)}")
+        return len(df_)
 
-    storm = src["peak"] >= args.threshold
-    for name, sel in (("storm", storm), ("quiet", ~storm)):
-        path = os.path.join(out_dir, f"train_index_{name}.csv")
-        src.loc[sel, ["datetime", "label"]].to_csv(path, index=False)
-        print(f"{name:6s} {int(sel.sum()):8,d} anchors ({100*sel.mean():5.1f} %)  -> {path}")
+    n_train = split(args.source_index, "train")
+    n_val = split(args.source_validation_index, "validation")
 
-    print(f"\nsource index {len(src):,} anchors, threshold ap30 >= {args.threshold:g} "
-          f"(Kp 5o) over a {args.out_steps*0.5:g} h window")
-    print(f"validation is unchanged for both regimes; normalization statistics are shared.")
+    print(f"\nthreshold ap30 >= {args.threshold:g} (Kp 5o) over a "
+          f"{args.out_steps*0.5:g} h window; {n_train:,} training and {n_val:,} validation "
+          f"anchors classified")
+    print("Normalization statistics stay pooled (table_stats_ap.pkl) so the two models see")
+    print("identically scaled inputs.")
+    print()
+    print("The BRANCH validation index is for training only. Early stopping and checkpoint")
+    print("selection use whatever validation set training is given, so a branch model told to")
+    print("validate on the full set is selected on a distribution it was never trained for --")
+    print("the storm model then stops after a few epochs and stays conservative. Train on the")
+    print("branch index, then run validate.py again with the FULL index to score.")
 
 
 if __name__ == "__main__":

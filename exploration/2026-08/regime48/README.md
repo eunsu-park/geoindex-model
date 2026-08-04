@@ -70,13 +70,20 @@ cd ~/GitHub/njit-geoindex/geoindex-model && conda activate geoindex
 python exploration/2026-08/regime48/build_regime_indices.py
 
 for R in quiet storm; do
+  N=regime48_ap_in12h_out12h_gnn_transformer_$R
+
+  # TRAIN on the branch validation index -- early stopping and checkpoint selection use
+  # whatever validation set training is given, and a branch model judged on the full set is
+  # selected on a distribution it was never trained for.
   python scripts/train.py --config-name=server_ap +io=in12h_out12h +model=gnn_transformer \
       data.timeseries.train_index=regime48_ap/train_index_$R.csv \
-      experiment.name=regime48_ap_in12h_out12h_gnn_transformer_$R
+      data.timeseries.validation_index=regime48_ap/validation_index_$R.csv \
+      experiment.name=$N
+
+  # SCORE on the full index, so both branches are comparable with the pooled run.
   python scripts/validate.py --config-name=server_ap +io=in12h_out12h +model=gnn_transformer \
       data.timeseries.train_index=regime48_ap/train_index_$R.csv \
-      experiment.name=regime48_ap_in12h_out12h_gnn_transformer_$R \
-      validation.epoch=best validation.mcd_samples=0
+      experiment.name=$N validation.epoch=best validation.mcd_samples=0
 done
 
 python exploration/2026-08/regime48/score_regimes.py
@@ -87,9 +94,15 @@ The pooled comparison run already exists as
 
 Both regimes deliberately keep `stat_file: table_stats_ap.pkl`, the pooled statistics, so the
 two models see identically scaled inputs and their outputs are directly comparable — and the
-storm model does not get a normalization fitted to 17 % of the record. The validation index is
-unchanged for both, so each model is scored on all 23,514 anchors and the branches are sliced
-afterwards.
+storm model does not get a normalization fitted to 17 % of the record.
+
+**The two validation indices are not interchangeable.** Training uses its validation set for
+early stopping and for choosing which checkpoint to keep, so it must see the branch it is being
+trained for. Scoring uses the full index so both branches land on the same 23,514 anchors as the
+pooled run. The first attempt at these runs used the full index for both and the result was
+invalid: the storm model's training loss was still falling at epoch 14 while its validation loss
+— computed on an 85 %-quiet set — had bottomed at epoch 4, so early stopping kept a
+barely-trained checkpoint that predicted 43 ap on storms whose observed mean was 88.
 
 ## Pass mark, fixed before the runs
 
