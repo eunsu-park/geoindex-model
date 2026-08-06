@@ -10,6 +10,59 @@ recurrence_proxy.py  can the EUV coronal-hole channel be reached for free?
 arrival_oracle.py    the ceiling on the coronagraph channel
 ```
 
+## 0. The logic: bounding an instrument nobody has built
+
+No solar image is used anywhere in this folder. The bounds come from a substitution.
+
+**The premise.** A solar image cannot reach Earth's magnetosphere directly; the causal chain is
+Sun → solar wind → magnetosphere → ap30. So whatever an image knows about the next twelve hours of
+ap30, it knows *through* the future solar wind.
+
+**The substitution.** Therefore hand the model the **true future wind** — the actual measured
+values it is trying to predict. That is strictly more than any image could supply, because a
+perfect observation of an outcome dominates any forecast of it. The gain is an upper bound on the
+whole channel, and it costs a ridge fit instead of an image archive.
+
+**The split.** Divide the wind into what an instrument could plausibly deliver and what it could
+not, and give each separately: speed and field magnitude, which a coronal hole announces; the
+field direction, which nothing remote measures.
+
+**The degradation.** Perfect knowledge is not on offer, so corrupt the true values the way a real
+pipeline is wrong — a level error held across the window, a timing error on the whole trajectory —
+and read off what survives at the accuracy real forecasts achieve.
+
+### Where this can fail
+
+1. **The premise can leak.** Solar EUV and X-ray flux reach Earth directly and change ionospheric
+   conductivity, which magnetometers see. ap is constructed to remove the regular daily variation,
+   so the leak should be small, but the bound does not cover it.
+2. **The reachable/unreachable split is a physical judgement, not a measurement.** This folder got
+   it wrong once, filing bt under "imaging cannot measure B" when a coronal hole announces the
+   compression at the stream interface as well as the speed. The measurement says what each bucket
+   is *worth*; assigning buckets to instruments is reasoning, and reasoning can be wrong.
+3. **The degradation model is a guess.** Level and timing error are not the only ways a pipeline is
+   wrong — it also misses faint events and raises false alarms, with correlated errors. Every row
+   in every sweep is optimistic at its stated accuracy.
+4. **The instrument understates the bound.** These are bounds on what a *ridge* extracts from
+   perfect information, not on what any model could. Adding physically motivated products to the
+   future-wind block — `v·bt`, `v·bt²`, `max(0, −bz)` and `v` times it — moves them:
+
+   | true future information | linear | + products |
+   |---|---|---|
+   | v + bt, the coronal-hole channel | +0.107 | **+0.116** |
+   | everything | +0.228 | **+0.270** |
+
+   A deep non-linear model would extract more still. **So every number here is a floor on the
+   bound rather than the bound**, and the imagery buckets should be read as "this scale, possibly
+   somewhat more". Note the share moves the other way: the coronal-hole channel is 47 % of the
+   linear headroom and 43 % of the enlarged one.
+
+**What the logic answers, and what it does not.** It answers *is this worth building*, from above,
+in hours rather than months. It does not answer *how good would it be* — for that you have to
+build it. The two decisions it settled here are that the 12-hour curve does not justify an image
+ingest, and that for a one-to-three day product imagery is the only route to information the
+in-situ record does not contain at any window length.
+
 ## 1. The headroom, and how it splits
 
 | given to the ridge | per-lead `rho` | vs the model |
