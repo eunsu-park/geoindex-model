@@ -32,38 +32,58 @@ envelope. Everything below is about that +0.104.
 
 ## 2. What each component is worth — and which ones imaging can reach
 
-The correlation table in the investigation record says what is *predictable*. It does not say
-what each component would *buy* if it were known. Handing the ridge the true future value of one
-component at a time:
+**Corrected 2026-08-06.** The first version of this section measured every component from its
+30-minute *average* column only, and asked what speed alone was worth. Both were wrong. A
+30-minute mean cancels the Alfvenic fluctuation that actually drives the index, and a coronal hole
+announces more than a speed. Redone over the full avg/min/max set, with the baseline given the
+same:
 
-| true future component | its 12 h predictability | worth, per-lead `rho` |
-|---|---|---|
-| **bz** — the phase | 0.098 | **+0.140** |
-| **bt** — field magnitude | 0.565 | **+0.077** |
-| **v** — speed | 0.866 | **+0.037** |
-| np — density | 0.546 | +0.029 |
-| v + np + t (all plasma) | | +0.065 |
-| bx + by + bt (all field but bz) | | +0.077 |
-| everything except bz — the envelope | | +0.104 |
-| everything | | +0.216 |
+| true future information given | per-lead `rho` | gain | needs the field DIRECTION? |
+|---|---|---|---|
+| v alone | 0.604 | +0.039 | no |
+| **v + bt — a coronal hole's whole message** | **0.672** | **+0.107** | **no** |
+| everything except bz | 0.683 | +0.118 | no |
+| **bz amplitude only, no sign** | 0.692 | **+0.128** | **no** |
+| everything except bz, + bz amplitude | 0.709 | **+0.145** | no |
+| bz signed | 0.741 | +0.176 | yes |
+| everything | 0.792 | +0.228 | yes |
 
-Now split by what an instrument can physically observe. **Imaging measures density and emission,
-never magnetic field** — Thomson-scattered white light gives electron density, EUV gives emission
-measure. So:
+(baseline, full past and no future information: 0.564)
 
-| bucket | worth | reachable by imagery? |
-|---|---|---|
-| bz, the phase | +0.140 | **no** — no imaging instrument measures B |
-| bt, field magnitude | +0.077 | **no**, for the same reason |
-| v, speed | **+0.037** | **yes** — this is exactly what a coronal hole predicts |
+**About 64 % of the headroom does not require knowing which way the field points.** The sign of Bz
+is worth +0.083 of the +0.228 — the largest single piece, but a minority. The claim that imaging
+cannot reach the ceiling *because* it cannot measure B was therefore too strong: it holds for the
+sign and not for the rest.
 
-**The ceiling on the entire EUV coronal-hole channel is +0.037**, and that is with a *perfect*
-speed forecast. For comparison the clock change, the one intervention that moved discrimination
-in the whole investigation, delivered +0.032 for the cost of a re-index.
+And a coronal hole announces both a speed and the compression at the stream interface, so the
+honest bound on the EUV channel is **+0.107**, not the +0.037 first reported here.
 
-This also explains MAGIA's null without appealing to its sample size. If the ceiling is +0.037 and
-a real pipeline captures a fifth of it, that is +0.007; MAGIA measured ΔCC +0.008 at out72h. The
-null is what a +0.037 channel looks like, not evidence of a deeper impossibility.
+### What actually limits it: arrival time, not accuracy
+
+Degrading the oracle the way a real pipeline is degraded — a level error held across the window,
+because a forecast is wrong about the event rather than independently wrong every half hour, and a
+timing error on the whole trajectory:
+
+| level error | timing error | gain | kept |
+|---|---|---|---|
+| none | none | +0.107 | 100 % |
+| 100 km/s, 2 nT | none | +0.097 | **91 %** |
+| none | 6 h | +0.058 | 54 % |
+| none | 12 h | +0.030 | 28 % |
+| **100 km/s, 2 nT** | **12 h** | **+0.021** | **19 %** |
+| 100 km/s, 2 nT | 24 h | +0.010 | 9 % |
+
+**Getting the speed right barely matters** — 90 % of the gain survives a 200 km/s error, because
+the shape inside the window is preserved. **Getting the arrival time right is everything.**
+WSA-class high-speed-stream arrival forecasts sit near ±12–24 h at two to four days of lead, and
+there the channel is worth **+0.01 to +0.02**.
+
+That is the same place the independent arrival-oracle analysis landed (+0.013 to +0.020 at
+±6–10 h). Two routes, one answer — but the reasoning first given for it was wrong, and the
+literature is on the other side of it: coronal-hole area to stream speed is an established
+relation and WSA is operational at NOAA for exactly this purpose. What the literature actually
+supports is the narrow claim, that the *sign* of the arriving field is not predictable from
+remote sensing.
 
 ### A retracted claim, and why it was wrong
 
