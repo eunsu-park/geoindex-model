@@ -85,6 +85,50 @@ relation and WSA is operational at NOAA for exactly this purpose. What the liter
 supports is the narrow claim, that the *sign* of the arriving field is not predictable from
 remote sensing.
 
+### Can a longer in-situ window substitute for the image?
+
+A coronal hole is a recurrent structure, so if the same hole hit Earth one rotation ago the
+in-situ record may already contain what an image would tell us. `input_length_v2.py` asks that
+directly, on the full average/minimum/maximum set, with a recurrence block that carries bt as well
+as ap30 and speed, and with the lag searched over 26 to 29 days rather than assumed to be 27.
+
+| input window | features | per-lead `rho` |
+|---|---|---|
+| **1 h** | 44 | **0.568** |
+| 6 h | 264 | 0.566 |
+| 12 h *(current)* | 528 | 0.564 |
+| 1 d | 528 | 0.541 |
+| 3 d | 528 | 0.475 |
+| 7 d | 616 | 0.394 |
+| 27 d | 594 | 0.179 |
+
+| 12 h of recent history plus | per-lead `rho` | gain |
+|---|---|---|
+| nothing | 0.564 | — |
+| a recurrence block at 27 d | 0.564 | −0.000 |
+| recurrence blocks at 26, 27, 27.5, 28, 29 d | 0.565 | +0.000 |
+| **the true future v and bt** | **0.672** | **+0.107** |
+
+**A longer window reaches none of it.** One hour is the best window and every longer one is worse;
+a recurrence block carrying the compression as well as the speed, with the lag searched, adds
+nothing at all. Meanwhile the same information known perfectly is worth +0.107.
+
+That is the strongest form of the argument *for* imagery, and it inverts how the earlier
+input-length result should be read. It was recorded as another closed axis. Alongside the
+corrected bound it means something else: **the information a coronal-hole image would supply is
+not sitting in the in-situ record at any window length, so imagery is the only route to it.**
+
+The physics is consistent. The in-situ record describes plasma that has already gone past. A
+coronal hole persists across rotations, but its geoeffective expression at Earth depends on how
+the hole has grown or closed since, on the current-sheet tilt, and on where Earth sits relative to
+the stream — all of which change between rotations. The recurrence carries the *possibility* of a
+stream and not its *timing or amplitude*, and timing is what the degradation table above shows to
+be everything. An image gives the hole as it is now.
+
+One caveat on the sweep. The ridge penalty is fixed, so longer windows are also carrying more
+columns, and part of the decline is over-parameterisation rather than absence of signal. The
+recurrence rows are the controlled comparison — same base, one block added — and they are flat.
+
 ### A retracted claim, and why it was wrong
 
 The first version of this file closed the EUV channel outright, on the grounds that the 27-day
