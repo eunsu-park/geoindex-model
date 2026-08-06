@@ -37,6 +37,30 @@ always true and therefore almost uninformative. What would discriminate is wheth
 whether it is aimed at Earth, and X-ray flux says neither -- that is a coronagraph observable,
 which the imagery bound puts at +0.01 to +0.02 at this horizon after arrival-time error.
 
+WHY, PRECISELY. Three reasons, and the third is easy to state wrongly.
+
+  1  A flare is not a CME. The association rate rises steeply with class -- low for C, roughly
+     half for M, most of X -- so most of the events counted here produced nothing that reached
+     Earth. Our own numbers show the same from the other side: 42 % of anchors have an M-class
+     flare in a 24-hour window while the storm rate is around 20 %.
+  2  X-ray flux carries no direction. GOES XRS is a full-disk photometer; it does not image, so
+     it cannot say where on the disk the flare was, let alone where a CME is going. Even the
+     GOES-R flare-location product would not close this: Palmerio et al. (2018) matched source
+     region to in-situ flux-rope type for only 20 % of events, with more than a third rotating
+     past 90 degrees in transit.
+  3  It is NOT that the input window is too short. The flare features here are separate lag-window
+     scalars reaching back five days, not channels inside the 12-hour input, so the eruption was
+     always within reach; and lengthening the actual input window makes things worse, not better
+     (1 h 0.568, 12 h 0.564, 3 d 0.475, 27 d 0.179). The binding constraint is that ARRIVAL-TIME
+     UNCERTAINTY EXCEEDS THE TARGET WINDOW. The community CME arrival MAE is 13.2 h with sigma
+     17.4 h over 1,702 forecasts (Kay et al. 2024) against a 12-hour target window, so knowing an
+     eruption happened cannot localise its arrival to the window being forecast.
+
+That distinction decides the remedy. If the cause were input length, a longer window would fix it.
+It is not, so the only fixes are a wider target window -- the one-to-three day product, where a
+day-wide window keeps 83 % of a perfect arrival forecast's value at +/- 6 h against 28 % for the
+12-hour curve -- or a genuinely better arrival forecast, which is a coronagraph problem.
+
 The standing caveat on the comparison with Chakraborty & Morley: they forecast Kp three hours
 ahead, and their X-ray gain appears inside a storm-routed branch (an LSTM classifier feeding two
 regime-specific deep Gaussian processes). A pooled linear model cannot reproduce a conditional
