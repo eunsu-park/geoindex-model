@@ -30,24 +30,65 @@ predicted at 12 h (0.565, 0.546) and both set the coupling amplitude. The earlie
 Imaging measures density and emission, not magnetic field, so imagery can only aim at the
 envelope. Everything below is about that +0.104.
 
-## 2. The EUV coronal-hole channel is closed
+## 2. What each component is worth — and which ones imaging can reach
 
-A solar EUV image tells Earth one thing about the coming days: a coronal hole is facing us and a
-stream will follow. The same feature already announced itself one rotation ago, and that record
-is free and exact where the image is an estimate.
+The correlation table in the investigation record says what is *predictable*. It does not say
+what each component would *buy* if it were known. Handing the ridge the true future value of one
+component at a time:
 
-| added to the model's information | per-lead `rho` | gain |
+| true future component | its 12 h predictability | worth, per-lead `rho` |
 |---|---|---|
-| ap30 across the window 27 d earlier | 0.568 | −0.000 |
-| speed across the window 27 d earlier | 0.568 | −0.001 |
-| trailing 3-day and 27-day level | 0.572 | +0.003 |
-| all three | 0.570 | +0.002 |
-| *(true future envelope, the target)* | *0.673* | *+0.104* |
+| **bz** — the phase | 0.098 | **+0.140** |
+| **bt** — field magnitude | 0.565 | **+0.077** |
+| **v** — speed | 0.866 | **+0.037** |
+| np — density | 0.546 | +0.029 |
+| v + np + t (all plasma) | | +0.065 |
+| bx + by + bt (all field but bz) | | +0.077 |
+| everything except bz — the envelope | | +0.104 |
+| everything | | +0.216 |
 
-The recurrence reaches none of the envelope. Not because recurrence carries no information about
-ap, but because it carries none the in-situ wind does not already have. **193 Å and 211 Å cannot
-beat this, so the EUV coronal-hole channel is closed for the 12-hour product.** This is a
-one-sided test and it says nothing about eruptions, which do not recur.
+Now split by what an instrument can physically observe. **Imaging measures density and emission,
+never magnetic field** — Thomson-scattered white light gives electron density, EUV gives emission
+measure. So:
+
+| bucket | worth | reachable by imagery? |
+|---|---|---|
+| bz, the phase | +0.140 | **no** — no imaging instrument measures B |
+| bt, field magnitude | +0.077 | **no**, for the same reason |
+| v, speed | **+0.037** | **yes** — this is exactly what a coronal hole predicts |
+
+**The ceiling on the entire EUV coronal-hole channel is +0.037**, and that is with a *perfect*
+speed forecast. For comparison the clock change, the one intervention that moved discrimination
+in the whole investigation, delivered +0.032 for the cost of a re-index.
+
+This also explains MAGIA's null without appealing to its sample size. If the ceiling is +0.037 and
+a real pipeline captures a fifth of it, that is +0.007; MAGIA measured ΔCC +0.008 at out72h. The
+null is what a +0.037 channel looks like, not evidence of a deeper impossibility.
+
+### A retracted claim, and why it was wrong
+
+The first version of this file closed the EUV channel outright, on the grounds that the 27-day
+recurrence is a free and exact record of what an image can only estimate, and that adding it was
+worth −0.000. The measurement was right and the inference was not: **the recurrence is a weak
+proxy, not a strong proxy returning empty.**
+
+| | per-lead `rho` |
+|---|---|
+| recurrence alone (ap30 one rotation ago) | 0.109 |
+| recurrence alone (speed one rotation ago) | 0.111 |
+| both | 0.121 |
+| raw correlation, last rotation's window peak vs this one's | **0.139** |
+
+And it adds **+0.000 to a model given no solar wind at all**, which is the test that settles it. A
+genuinely redundant predictor still helps a model that lacks what it is redundant with. This one
+does not, so it was never carrying the information in the first place.
+
+Coronal holes are among the most persistent solar structures, but 27 days is a hard interval:
+holes grow and close between rotations, the synodic period is 27.28 days and differential
+rotation moves the lag with latitude, whether the CIR compression reaches Earth depends on a
+current-sheet tilt that changes, and roughly half of storms are CME-driven and do not recur at
+all. A weak instrument returning null proves nothing. The +0.037 bound above is the honest
+version of the same question.
 
 ## 3. The coronagraph channel, bounded
 
