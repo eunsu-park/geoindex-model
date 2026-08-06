@@ -41,7 +41,7 @@ D = os.path.expanduser("~/Projects/GeoIndex/datasets")
 WIND = ["v_avg", "np_avg", "t_avg", "bx_avg", "by_avg", "bz_avg", "bt_avg"]
 ROT = 27 * 48
 DAY = 48
-LADDER = [0, 2, 3, 4, 5, 6, 7, 9, 12, 15, 18, 22, 27, 32, 39, 48, 56, 67, 80, 94, 111, 132,
+LEVELS = [0, 2, 3, 4, 5, 6, 7, 9, 12, 15, 18, 22, 27, 32, 39, 48, 56, 67, 80, 94, 111, 132,
           154, 179, 207, 236, 265, 294, 324, 355, 388, 421, 456, 494, 534, 617]
 
 
@@ -72,8 +72,8 @@ def main() -> None:
     ap_.add_argument("--jitter", action="store_true",
                      help="sweep the oracle's arrival-time error instead of the model table")
     args = ap_.parse_args()
-    if args.threshold not in LADDER:
-        raise SystemExit(f"{args.threshold:g} is not an ap ladder value; 50 silently means 56")
+    if args.threshold not in LEVELS:
+        raise SystemExit(f"{args.threshold:g} is not an the discrete ap30 levels value; 50 silently means 56")
     thr = args.threshold - 0.5
 
     tbl = pd.read_parquet(os.path.join(D, "data.parquet")).set_index("datetime").sort_index()

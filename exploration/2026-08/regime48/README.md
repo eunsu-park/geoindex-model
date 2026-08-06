@@ -61,9 +61,9 @@ an observed rate of 0.187 — which is the main reason 48 was chosen over 39 or 
 
 ## Why 48
 
-ap30 is a 36-level ladder, not a continuous variable. Between 48 and 56 there is nothing, so a
+ap30 is a 36 discrete levels, not a continuous variable. Between 48 and 56 there is nothing, so a
 threshold written as `50` silently means 56, and `100` means 111. `build_regime_indices.py`
-refuses any threshold not on the ladder for that reason.
+refuses any threshold not on the discrete level set for that reason.
 
 | | ≥ 39 | **≥ 48** | ≥ 56 |
 |---|---|---|---|
@@ -182,11 +182,11 @@ would be circular.
 
 ## Two traps this experiment fell into
 
-Both were the ap ladder in different disguises, and both are now guarded in code.
+Both were the discrete ap30 levels in different disguises, and both are now guarded in code.
 
-1. **A threshold off the ladder.** `50` silently means `56`; `100` means `111`.
-   `build_regime_indices.py` refuses any threshold that is not a ladder value.
-2. **The denormalization round trip.** The stored archives hold `47.99999` where the ladder
+1. **A threshold off the discrete level set.** `50` silently means `56`; `100` means `111`.
+   `build_regime_indices.py` refuses any threshold that is not one of the discrete ap30 levels.
+2. **The denormalization round trip.** The stored archives hold `47.99999` where the discrete level set
    value is `48`, so a bare `peak >= 48` drops every window whose maximum is exactly 48 and
    silently scores the `>= 56` subset — which the first version of `score_regimes.py` did, on
    3,634 rows instead of 4,829. It now applies a half-unit tolerance and prints what a bare

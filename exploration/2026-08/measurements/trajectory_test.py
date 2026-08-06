@@ -16,7 +16,7 @@ distribution around it is new.
 
 The residual process is fitted on the earlier 60 % of anchors and applied to the rest.
 Everything is done in log1p space, where the model was trained, and snapped back onto the
-36-level ap ladder -- ap30 is not continuous, and the ladder is part of the shape.
+36-level the discrete ap30 levels -- ap30 is not continuous, and the discrete level set is part of the shape.
 """
 
 import io
@@ -31,7 +31,7 @@ RUN = "probe_ap_in12h_out12h_gnn_transformer_obs"
 SPLIT = 0.60
 N_TRAJ = 200
 SEED = 11
-LADDER = np.array([0, 2, 3, 4, 5, 6, 7, 9, 12, 15, 18, 22, 27, 32, 39, 48, 56, 67, 80, 94,
+LEVELS = np.array([0, 2, 3, 4, 5, 6, 7, 9, 12, 15, 18, 22, 27, 32, 39, 48, 56, 67, 80, 94,
                    111, 132, 154, 179, 207, 236, 265, 294, 324, 355, 388, 421, 456, 494,
                    534, 617], float)
 
@@ -48,9 +48,9 @@ def load(run):
 
 
 def snap(x):
-    """Nearest level on the ap ladder."""
-    idx = np.abs(x[..., None] - LADDER).argmin(axis=-1)
-    return LADDER[idx]
+    """Nearest level on the discrete ap30 levels."""
+    idx = np.abs(x[..., None] - LEVELS).argmin(axis=-1)
+    return LEVELS[idx]
 
 
 def sharpness(curves):

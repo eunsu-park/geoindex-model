@@ -61,10 +61,10 @@ def main() -> None:
         assert np.allclose(t, true, atol=1e-3), f"{k}: targets differ"
 
     peak = true.max(axis=1)
-    # The archive stores denormalized targets, and the log1p round trip lands a ladder value of
+    # The archive stores denormalized targets, and the log1p round trip lands one of the discrete ap30 levels of
     # 48 at 47.99999. A bare `>= 48` therefore drops every window whose true maximum is exactly
     # 48 and silently scores the >= 56 subset instead -- which is what the first version of this
-    # script did. The ladder gap around 48 is 8, so half a unit of tolerance is unambiguous.
+    # script did. The gap between adjacent levels around 48 is 8, so half a unit of tolerance is unambiguous.
     storm = peak >= args.threshold - 0.5
     # A run with a peak head emits the window maximum as its own scalar; that is the quantity
     # to score, not the maximum of the curve, which is doubly shrunk (section 2.7).

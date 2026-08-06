@@ -5,9 +5,9 @@ training time, and table mode already takes the training anchors from a CSV -- s
 split is two index files and a Hydra override. `src/`, `configs/` and `scripts/` are untouched,
 which is the point: the tree was deliberately restored to the manuscript state.
 
-Why 48. ap30 is not continuous -- it is a 36-level ladder, and between 48 and 56 there is
+Why 48. ap30 is not continuous -- it is a 36 discrete levels, and between 48 and 56 there is
 nothing, so a threshold written as "50" silently means 56 and "100" means 111. 48 is on the
-ladder (Kp 5o). Measured with ridges over 1998-2021 / 2022-2025, it is also where the split
+one of the discrete levels (Kp 5o). Measured with ridges over 1998-2021 / 2022-2025, it is also where the split
 behaves best:
 
                               >= 39      >= 48      >= 56
@@ -32,7 +32,7 @@ run validate.py again with the FULL index to score.
 
 Usage:
     python build_regime_indices.py                       # writes to the data root
-    python build_regime_indices.py --threshold 39        # a different ladder level
+    python build_regime_indices.py --threshold 39        # a different discrete level
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ import os
 import numpy as np
 import pandas as pd
 
-LADDER = [0, 2, 3, 4, 5, 6, 7, 9, 12, 15, 18, 22, 27, 32, 39, 48, 56, 67, 80, 94, 111, 132,
+LEVELS = [0, 2, 3, 4, 5, 6, 7, 9, 12, 15, 18, 22, 27, 32, 39, 48, 56, 67, 80, 94, 111, 132,
           154, 179, 207, 236, 265, 294, 324, 355, 388, 421, 456, 494, 534, 617]
 
 
@@ -60,12 +60,12 @@ def main() -> None:
                      help="forecast window length; must match the +io group")
     args = ap_.parse_args()
 
-    if args.threshold not in LADDER:
-        nearest = min(LADDER, key=lambda v: abs(v - args.threshold))
+    if args.threshold not in LEVELS:
+        nearest = min(LEVELS, key=lambda v: abs(v - args.threshold))
         raise SystemExit(
-            f"{args.threshold:g} is not on the ap ladder, so the effective threshold would "
-            f"silently be {min(v for v in LADDER if v >= args.threshold)}. "
-            f"Use {nearest} or another ladder level: {LADDER[10:22]}")
+            f"{args.threshold:g} is not on the discrete ap30 levels, so the effective threshold would "
+            f"silently be {min(v for v in LEVELS if v >= args.threshold)}. "
+            f"Use {nearest} or another discrete level: {LEVELS[10:22]}")
 
     root = os.path.expanduser(args.data_root)
     out_dir = os.path.join(root, args.out_dir)
