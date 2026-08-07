@@ -371,3 +371,87 @@ That is a real gap rather than a hedge. Nothing here measures it, because measur
 different substitution: give the model the true future Bz *sign* and nothing else about Bz. The
 literature position is that remote sensing does not determine 1-AU flux-rope orientation with
 useful skill, and that is the only thing currently standing in the gap.
+
+## 7. The Bz-sign gap, priced and then closed
+
+Added 2026-08-07. §6 named a gap: the substitutions here bound the *arrival* channel, and an
+encoder that could read flux-rope orientation would supply something never priced. Only the
+literature stood in that gap. `bz_sign_channel.py` prices it, and the literature then closes it
+with a number instead of a position.
+
+### What orientation knowledge is worth
+
+True future information given, ridge, same anchors:
+
+| given | all | gain | onset | gain |
+|---|---|---|---|---|
+| none (the model) | 0.5686 | — | 0.3082 | — |
+| **one bit per window: is it southward?** | 0.6356 | **+0.0670** | 0.4535 | **+0.1454** |
+| per-step sign of Bz, no magnitude | 0.6265 | +0.0578 | 0.3499 | +0.0417 |
+| per-step \|Bz\|, no sign | 0.6554 | +0.0868 | 0.6044 | +0.2962 |
+| \|Bz\| + the one-bit sign | 0.6806 | +0.1120 | 0.6010 | +0.2928 |
+| Bz itself | 0.7083 | +0.1396 | 0.5457 | +0.2375 |
+| all future wind | 0.7847 | +0.2161 | 0.7821 | +0.4739 |
+
+The bit is "does this window contain Bz ≤ −10 nT", base rate 0.066 overall and 0.332 on onset
+windows. **One bit per forecast is worth +0.067 pooled** — nearly twice the entire arrival
+channel's +0.038 ceiling, and it is a single binary. So the gap §6 named was a real one and the
+prize inside it is the largest single item imagery could plausibly contest.
+
+### What it costs to be wrong
+
+Flip the bit with probability 1 − p, retrain, sweep p. Twelve draws per row.
+
+| accuracy p | all | gain | onset | gain |
+|---|---|---|---|---|
+| 0.50 (no skill) | 0.5686 | +0.0000 | 0.3082 | +0.0000 |
+| 0.65 | 0.5697 | +0.0011 | 0.3106 | +0.0024 |
+| 0.75 | 0.5722 | +0.0036 | 0.3161 | +0.0079 |
+| 0.85 | 0.5780 | +0.0094 | 0.3295 | +0.0214 |
+| 0.90 | 0.5844 | +0.0157 | 0.3441 | +0.0360 |
+| 0.95 | 0.5973 | +0.0286 | 0.3750 | +0.0668 |
+| 1.00 | 0.6356 | +0.0670 | 0.4535 | +0.1454 |
+
+| to be worth | all anchors | onset windows |
+|---|---|---|
+| +0.02 | **92 % correct** | **84 % correct** |
+| +0.05 | 98 % correct | 92 % correct |
+| +0.10 | unreachable | 97 % correct |
+
+**Read `p` correctly.** The flip is symmetric, so `p` is balanced accuracy — right on `p` of the
+southward windows *and* `p` of the rest. It is not comparable to the 93.4 % an always-say-no
+forecast scores against a 6.6 % base rate, which carries no information at all. The requirement is
+demanding precisely because a wrong bit is not merely uninformative, it points the wrong way; the
+gain falls off roughly as the square of the forecast-truth correlation, so half the perfect value
+is already gone by p = 0.95.
+
+### What the literature delivers
+
+The requirement is on the **end-to-end** quantity — will the structure arriving at Earth turn
+southward — so it must be compared against end-to-end studies, not against any single ingredient.
+
+- Palmerio et al. (2018), 20 CMEs uniquely linked Sun-to-Earth by heliospheric imaging: the
+  intrinsic flux rope type matched the in situ type **strictly in 20 % of events, and in 55 %
+  counting intermediate cases**. That is the end-to-end number.
+- The hemispheric helicity rule reaches **80–95 %**, but that is chirality *at the Sun*, one
+  ingredient of three (chirality, axis orientation, axial field direction). It is not the
+  end-to-end quantity, and Palmerio's 20–55 % is what the ingredients compose to after
+  Sun-to-Earth evolution — 65 % of their events changed axis tilt by less than 90°, so a third
+  changed by more.
+- Reviews are explicit that Bz forecasting is "as yet unachievable in practice", and a pattern
+  recognition attempt showed only limited improvement over the trivial Bz = 0 baseline.
+
+**At 55 % the channel is worth +0.001 pooled and +0.002 on onset windows** — read straight off the
+row above, and indistinguishable from nothing. Even granting the hemispheric rule's 95 % as though
+it were end-to-end, which it is not, the channel reaches +0.029 pooled and +0.067 on onset windows.
+
+So the gap §6 opened is closed, and closed the way the rest of this file works: **a measured
+requirement (84–92 % balanced, end-to-end) against a measured capability (20–55 %).** The
+statement "remote sensing does not determine 1-AU field orientation with useful skill" no longer
+has to be taken on authority — the distance between the requirement and the capability is now a
+number, and it is large.
+
+Sources: [Palmerio et al. 2018](https://agupubs.onlinelibrary.wiley.com/doi/full/10.1002/2017SW001767) ·
+[Palmerio et al. 2017](https://arxiv.org/abs/1701.08595) ·
+[hemispheric rule strength](https://arxiv.org/pdf/1711.05758) ·
+[forecasting strong southward field](https://agupubs.onlinelibrary.wiley.com/doi/pdfdirect/10.1029/2018SW002056)
