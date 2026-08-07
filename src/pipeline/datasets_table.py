@@ -108,6 +108,15 @@ class TableBaseDataset(Dataset):
             self.all_variables.index(v) for v in self.target_variables
         ]
 
+        # Auxiliary channel forecasting: the same input variables, but sliced
+        # over the TARGET window. Only built when the loss will consume it.
+        aux_cfg = getattr(getattr(config, 'training', None),
+                          'aux_forecast', None)
+        self.aux_enabled = bool(aux_cfg is not None and aux_cfg.enabled)
+        if self.aux_enabled:
+            logger.info(f"Auxiliary targets: {len(self.input_variables)} "
+                        f"channels over the target window")
+
         logger.info(f"Table mode: {len(self.array)} rows loaded from {table_path}, "
                     f"input=[T{self.input_start:+d}:T{self.input_end:+d}] "
                     f"({self.input_len} steps), "
@@ -162,6 +171,39 @@ class TableBaseDataset(Dataset):
         target_array = np.stack(target_cols, axis=-1)
 
         return input_array.astype(np.float32), target_array.astype(np.float32)
+
+    def _aux_target(self, ref_dt) -> np.ndarray:
+        """Slice and normalize the input variables over the TARGET window.
+
+        This is the auxiliary channel-forecasting target: the future values of
+        everything the model is given, normalized exactly as the input side is,
+        so the auxiliary loss lives on the same scale as the regression loss.
+
+        Args:
+            ref_dt: Reference time (numpy.datetime64)
+
+        Returns:
+            Array of shape (target_len, num_input_variables).
+        """
+        ref_row = self.dt_to_row[ref_dt]
+        raw = self.array[ref_row + self.target_start:ref_row + self.target_end]
+        cols = [self.normalizer.normalize_omni(raw[:, j], self.all_variables[j])
+                for j in self._input_var_idx]
+        return np.stack(cols, axis=-1).astype(np.float32)
+
+    def _sample(self, name, ref_dt, label, input_array, target_array) -> dict:
+        """Assemble the batch dict shared by all three table datasets."""
+        sample = {
+            'inputs': torch.tensor(input_array, dtype=torch.float32),
+            'targets': torch.tensor(target_array, dtype=torch.float32),
+            'labels': torch.tensor(np.array([[label]], dtype=np.float32),
+                                   dtype=torch.float32),
+            'file_names': name
+        }
+        if self.aux_enabled:
+            sample['aux_targets'] = torch.tensor(
+                self._aux_target(ref_dt), dtype=torch.float32)
+        return sample
 
     @staticmethod
     def _dt_to_name(dt) -> str:
@@ -232,14 +274,7 @@ class TableTrainDataset(TableBaseDataset):
                 0, noise_std, input_array.shape
             ).astype(np.float32)
 
-        label_array = np.array([[label]], dtype=np.float32)
-
-        return {
-            'inputs': torch.tensor(input_array, dtype=torch.float32),
-            'targets': torch.tensor(target_array, dtype=torch.float32),
-            'labels': torch.tensor(label_array, dtype=torch.float32),
-            'file_names': name
-        }
+        return self._sample(name, ref_dt, label, input_array, target_array)
 
 
 class TableValidationDataset(TableBaseDataset):
@@ -263,14 +298,8 @@ class TableValidationDataset(TableBaseDataset):
         name, label = self.file_list[idx]
         ref_dt = self._name_to_dt[name]
         input_array, target_array = self._read_and_process(ref_dt)
-        label_array = np.array([[label]], dtype=np.float32)
 
-        return {
-            'inputs': torch.tensor(input_array, dtype=torch.float32),
-            'targets': torch.tensor(target_array, dtype=torch.float32),
-            'labels': torch.tensor(label_array, dtype=torch.float32),
-            'file_names': name
-        }
+        return self._sample(name, ref_dt, label, input_array, target_array)
 
 
 class TableTestDataset(TableBaseDataset):
@@ -304,11 +333,5 @@ class TableTestDataset(TableBaseDataset):
         name, label = self.file_list[idx]
         ref_dt = self._name_to_dt[name]
         input_array, target_array = self._read_and_process(ref_dt)
-        label_array = np.array([[label]], dtype=np.float32)
 
-        return {
-            'inputs': torch.tensor(input_array, dtype=torch.float32),
-            'targets': torch.tensor(target_array, dtype=torch.float32),
-            'labels': torch.tensor(label_array, dtype=torch.float32),
-            'file_names': name
-        }
+        return self._sample(name, ref_dt, label, input_array, target_array)

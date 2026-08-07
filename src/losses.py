@@ -1306,6 +1306,58 @@ def create_loss_functions(config, stat_dict: Optional[dict] = None):
     return regression_criterion, contrastive_criterion
 
 
+def create_aux_criterion(config):
+    """Create the auxiliary channel-forecasting criterion from config.
+
+    Kept out of ``create_loss_functions`` so its two-value return stays as it
+    is; every caller of that function is unaffected by this one.
+
+    Args:
+        config: Hydra configuration object.
+
+    Returns:
+        Tuple of (criterion, weight). Criterion is None and weight 0.0 when
+        ``training.aux_forecast.enabled`` is false or absent.
+
+    Raises:
+        ValueError: If the auxiliary task is enabled on a configuration that
+            cannot supply its targets or cannot build its head.
+    """
+    aux_cfg = getattr(getattr(config, 'training', None), 'aux_forecast', None)
+    if aux_cfg is None or not aux_cfg.enabled:
+        return None, 0.0
+
+    ts_cfg = getattr(getattr(config, 'data', None), 'timeseries', None)
+    dataset_mode = str(getattr(ts_cfg, 'dataset_mode', 'csv')).lower()
+    if dataset_mode != 'table':
+        raise ValueError(
+            "training.aux_forecast.enabled=true requires "
+            "data.timeseries.dataset_mode='table'; only the table dataset "
+            f"emits the auxiliary targets (got '{dataset_mode}').")
+
+    model_type = getattr(config.model, 'model_type', None)
+    if model_type != 'gnn':
+        raise ValueError(
+            f"training.aux_forecast.enabled=true but model_type='{model_type}' "
+            f"does not build an auxiliary head; only the gnn architectures do.")
+
+    base = str(getattr(aux_cfg, 'base_loss', 'mse')).lower()
+    if base == 'mse':
+        criterion = nn.MSELoss()
+    elif base == 'mae':
+        criterion = nn.L1Loss()
+    elif base == 'huber':
+        criterion = nn.HuberLoss(delta=config.training.huber_delta)
+    else:
+        raise ValueError(
+            f"Unknown training.aux_forecast.base_loss '{base}' "
+            f"(expected mse, mae or huber)")
+
+    weight = float(getattr(aux_cfg, 'weight', 1.0))
+    print(f"Auxiliary channel forecasting: {base.upper()} x {weight}")
+    return criterion, weight
+
+
 # =============================================================================
 # Verification
 # =============================================================================

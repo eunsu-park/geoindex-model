@@ -465,6 +465,7 @@ class GNNOnlyModel(nn.Module):
         timesnet_top_k: int = 3,
         timesnet_num_kernels: int = 3,
         linear_hidden_dim: int = 256,
+        num_aux_variables: int = 0,
     ):
         super().__init__()
 
@@ -473,6 +474,7 @@ class GNNOnlyModel(nn.Module):
 
         self.num_target_variables = num_target_variables
         self.target_sequence_length = target_sequence_length
+        self.num_aux_variables = num_aux_variables
 
         self.gnn_encoder = GNNEncoder(
             num_input_variables=num_input_variables,
@@ -510,6 +512,19 @@ class GNNOnlyModel(nn.Module):
             nn.Linear(d_model // 2, target_sequence_length * num_target_variables)
         )
 
+        # Auxiliary head: forecast every input channel over the target window.
+        # Trained alongside the regression head, discarded at inference — its
+        # job is to force the shared trunk to carry the future wind, which is
+        # what the target index actually depends on.
+        self.aux_head = None
+        if num_aux_variables > 0:
+            self.aux_head = nn.Sequential(
+                nn.Linear(d_model, d_model // 2),
+                nn.ReLU(),
+                nn.Dropout(gnn_dropout),
+                nn.Linear(d_model // 2, target_sequence_length * num_aux_variables)
+            )
+
     @property
     def adjacency_matrix(self) -> torch.Tensor:
         """Return the learned adjacency matrix (for visualization)."""
@@ -519,7 +534,8 @@ class GNNOnlyModel(nn.Module):
         self,
         solar_wind_input: torch.Tensor,
         image_input: Optional[torch.Tensor] = None,
-        return_features: bool = False
+        return_features: bool = False,
+        return_aux: bool = False
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor, None]]:
         """Forward pass.
 
@@ -527,10 +543,19 @@ class GNNOnlyModel(nn.Module):
             solar_wind_input: Input time series (B, seq_len, num_vars).
             image_input: Ignored (API compatibility).
             return_features: Whether to return intermediate features.
+            return_aux: Whether to also return the auxiliary channel forecast.
+                Opt-in so the existing return contract is unchanged.
 
         Returns:
             Predictions (B, target_seq_len, num_target_vars), or
             tuple (predictions, features, None) if return_features=True.
+            When return_aux=True the auxiliary forecast
+            (B, target_seq_len, num_aux_vars) is appended to whichever of those
+            two shapes applies.
+
+        Raises:
+            RuntimeError: If return_aux=True on a model built without an
+                auxiliary head.
         """
         gnn_features = self.gnn_encoder(solar_wind_input)  # (B, d_model)
 
@@ -541,9 +566,23 @@ class GNNOnlyModel(nn.Module):
             self.num_target_variables
         )
 
+        if not return_aux:
+            if return_features:
+                return output, gnn_features, None
+            return output
+
+        if self.aux_head is None:
+            raise RuntimeError(
+                "return_aux=True but this model was built without an auxiliary "
+                "head; set training.aux_forecast.enabled=true before creating it.")
+        aux = self.aux_head(gnn_features).reshape(
+            predictions.size(0),
+            self.target_sequence_length,
+            self.num_aux_variables
+        )
         if return_features:
-            return output, gnn_features, None
-        return output
+            return output, gnn_features, None, aux
+        return output, aux
 
 
 @register_model("gnn")
@@ -580,6 +619,15 @@ def _create_gnn(config):
     timesnet_num_kernels = getattr(config.model, 'timesnet_num_kernels', 3)
     linear_hidden_dim = getattr(config.model, 'gnn_linear_hidden_dim', 256)
 
+    # The auxiliary head forecasts every input channel over the target window,
+    # so its width is the input variable count — not the target variable count.
+    aux_cfg = getattr(getattr(config, 'training', None), 'aux_forecast', None)
+    num_aux_variables = (num_input_variables
+                         if aux_cfg is not None and aux_cfg.enabled else 0)
+    if num_aux_variables:
+        print(f"  GNN auxiliary head: {num_aux_variables} channels x "
+              f"{target_sequence_length} steps")
+
     model = GNNOnlyModel(
         num_input_variables=num_input_variables,
         input_sequence_length=input_sequence_length,
@@ -608,6 +656,7 @@ def _create_gnn(config):
         timesnet_top_k=timesnet_top_k,
         timesnet_num_kernels=timesnet_num_kernels,
         linear_hidden_dim=linear_hidden_dim,
+        num_aux_variables=num_aux_variables,
     )
     print(f"  GNN temporal encoder: {gnn_temporal_type}")
     print(f"  GNN: {gnn_num_gcn_layers} GCN layers, {gnn_num_nodes} nodes, "

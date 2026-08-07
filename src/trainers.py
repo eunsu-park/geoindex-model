@@ -32,6 +32,7 @@ import torch.nn.functional as F
 import numpy as np
 import matplotlib.pyplot as plt
 
+from .losses import create_aux_criterion
 from .plotting import plot_prediction_timeseries, denormalize_arrays
 
 
@@ -52,6 +53,7 @@ class MetricsTracker:
             'loss': [],
             'reg_loss': [],
             'cont_loss': [],
+            'aux_loss': [],
             'mae': [],
             'rmse': [],
             'cosine_sim': []
@@ -63,7 +65,8 @@ class MetricsTracker:
         Args:
             batch_metrics: Dictionary containing metric values from a batch.
         """
-        for key in ['loss', 'reg_loss', 'cont_loss', 'mae', 'rmse', 'cosine_sim']:
+        for key in ['loss', 'reg_loss', 'cont_loss', 'aux_loss',
+                    'mae', 'rmse', 'cosine_sim']:
             if key in batch_metrics:
                 self.metrics[key].append(batch_metrics[key])
 
@@ -322,6 +325,9 @@ class Trainer:
         # Model type determines training behavior
         self.model_type = getattr(config.model, 'model_type', 'fusion')
 
+        # Auxiliary channel forecasting (off unless explicitly enabled)
+        self.aux_criterion, self.lambda_aux = create_aux_criterion(config)
+
         # Components
         self.metrics_tracker = MetricsTracker()
         self.checkpoint_manager = CheckpointManager(
@@ -523,6 +529,34 @@ class Trainer:
             else:
                 print(f"Warning: Failed to create prediction plot: {e}")
 
+    def _aux_loss(self, aux_out, data_dict) -> Optional[torch.Tensor]:
+        """Auxiliary channel-forecasting loss, or None when the task is off.
+
+        Args:
+            aux_out: Auxiliary head output (B, target_len, num_input_vars), or
+                None when the model did not produce one.
+            data_dict: The batch, which must carry 'aux_targets' when the task
+                is enabled.
+
+        Returns:
+            The auxiliary loss tensor, or None when the task is disabled.
+
+        Raises:
+            KeyError: If the task is enabled but the batch has no auxiliary
+                targets — this means the dataset is not in table mode, and
+                silently training without the term would look like a null
+                result rather than a wiring bug.
+        """
+        if self.aux_criterion is None or aux_out is None:
+            return None
+        if 'aux_targets' not in data_dict:
+            raise KeyError(
+                "training.aux_forecast.enabled=true but the batch carries no "
+                "'aux_targets'; the auxiliary targets are only emitted by the "
+                "table dataset (data.timeseries.dataset_mode='table').")
+        return self.aux_criterion(aux_out,
+                                  data_dict['aux_targets'].to(self.device))
+
     def train_step(self, data_dict: Dict[str, torch.Tensor]) -> Dict[str, Any]:
         """Perform a single training step with optional gradient accumulation.
 
@@ -550,6 +584,8 @@ class Trainer:
         if self.accumulation_counter == 0:
             self.optimizer.zero_grad()
 
+        aux_out = None
+
         # Forward pass depends on model type
         if self.model_type == "fusion":
             # Full multimodal model with feature extraction
@@ -572,7 +608,11 @@ class Trainer:
         elif self.model_type in ("transformer", "linear", "tcn", "convlstm",
                                    "gnn", "timesnet", "patchtst",
                                    "lstm", "bilstm"):
-            outputs = self.model(inputs, sdo, return_features=False)
+            if self.aux_criterion is not None:
+                outputs, aux_out = self.model(inputs, sdo, return_features=False,
+                                              return_aux=True)
+            else:
+                outputs = self.model(inputs, sdo, return_features=False)
             cont_loss = torch.tensor(0.0, device=self.device)
             cosine_sim = 0.0
         else:
@@ -589,6 +629,10 @@ class Trainer:
             # Two-stage training: Stage 1 uses only contrastive loss
             reg_loss = torch.tensor(0.0, device=self.device)
             total_loss = cont_loss
+
+        aux_loss = self._aux_loss(aux_out, data_dict)
+        if aux_loss is not None:
+            total_loss = total_loss + self.lambda_aux * aux_loss
 
         # Backward pass with gradient accumulation
         # Divide loss by accumulation steps to scale the gradient
@@ -633,6 +677,7 @@ class Trainer:
             'loss': total_loss.item(),
             'reg_loss': reg_loss.item(),
             'cont_loss': cont_loss.item() if isinstance(cont_loss, torch.Tensor) else cont_loss,
+            'aux_loss': aux_loss.item() if aux_loss is not None else 0.0,
             'mae': mae,
             'rmse': rmse,
             'cosine_sim': cosine_sim
@@ -651,6 +696,8 @@ class Trainer:
         sdo = data_dict["sdo"].to(self.device) if "sdo" in data_dict else None
         inputs = data_dict["inputs"].to(self.device)
         targets = data_dict["targets"].to(self.device)
+
+        aux_out = None
 
         # Forward pass depends on model type
         if self.model_type == "fusion":
@@ -672,7 +719,11 @@ class Trainer:
         elif self.model_type in ("transformer", "linear", "tcn", "convlstm",
                                    "gnn", "timesnet", "patchtst",
                                    "lstm", "bilstm"):
-            outputs = self.model(inputs, sdo, return_features=False)
+            if self.aux_criterion is not None:
+                outputs, aux_out = self.model(inputs, sdo, return_features=False,
+                                              return_aux=True)
+            else:
+                outputs = self.model(inputs, sdo, return_features=False)
             cont_loss = torch.tensor(0.0, device=self.device)
             cosine_sim = 0.0
         else:
@@ -690,6 +741,10 @@ class Trainer:
             reg_loss = torch.tensor(0.0, device=self.device)
             total_loss = cont_loss
 
+        aux_loss = self._aux_loss(aux_out, data_dict)
+        if aux_loss is not None:
+            total_loss = total_loss + self.lambda_aux * aux_loss
+
         # Calculate metrics
         mae = F.l1_loss(outputs, targets).item()
         mse = F.mse_loss(outputs, targets).item()
@@ -699,6 +754,7 @@ class Trainer:
             'loss': total_loss.item(),
             'reg_loss': reg_loss.item(),
             'cont_loss': cont_loss.item() if isinstance(cont_loss, torch.Tensor) else cont_loss,
+            'aux_loss': aux_loss.item() if aux_loss is not None else 0.0,
             'mae': mae,
             'rmse': rmse,
             'cosine_sim': cosine_sim
@@ -810,6 +866,7 @@ class Trainer:
             f"total_loss: {avg_metrics.get('loss', 0):.6f} | "
             f"reg_loss: {avg_metrics.get('reg_loss', 0):.6f} | "
             f"cont_loss: {avg_metrics.get('cont_loss', 0):.6f} | "
+            f"aux_loss: {avg_metrics.get('aux_loss', 0):.6f} | "
             f"cosine_sim: {avg_metrics.get('cosine_sim', 0):.4f} | "
             f"MAE: {avg_metrics.get('mae', 0):.4f} | "
             f"RMSE: {avg_metrics.get('rmse', 0):.4f} | "
@@ -838,6 +895,7 @@ class Trainer:
             f"Total loss: {metrics.get('loss', 0):.6f} | "
             f"Reg loss: {metrics.get('reg_loss', 0):.6f} | "
             f"Cont loss: {metrics.get('cont_loss', 0):.6f} | "
+            f"Aux loss: {metrics.get('aux_loss', 0):.6f} | "
             f"Cosine sim: {metrics.get('cosine_sim', 0):.4f} | "
             f"MAE: {metrics.get('mae', 0):.4f} | "
             f"RMSE: {metrics.get('rmse', 0):.4f} | "
@@ -918,8 +976,18 @@ class Trainer:
                 'timestamp': datetime.now().isoformat()
             })
 
-            # Use validation loss for best model selection if available
-            selection_loss = epoch_metrics.get('val_loss', epoch_metrics.get('loss', 0))
+            # Use validation loss for best model selection if available.
+            # With the auxiliary task on, select on the REGRESSION loss alone:
+            # the auxiliary term is a training device, and letting it into the
+            # criterion would pick the checkpoint that forecasts the wind best
+            # rather than the index best.
+            if self.aux_criterion is not None:
+                selection_loss = epoch_metrics.get(
+                    'val_reg_loss',
+                    epoch_metrics.get('reg_loss', epoch_metrics.get('loss', 0)))
+            else:
+                selection_loss = epoch_metrics.get(
+                    'val_loss', epoch_metrics.get('loss', 0))
 
             # Learning rate scheduling (uses val_loss via selection_loss)
             if self.scheduler:

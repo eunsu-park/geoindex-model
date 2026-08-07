@@ -396,6 +396,22 @@ training:
   regression_loss_type: "solar_wind_weighted"
   huber_delta: 10.0
 
+  # Auxiliary channel forecasting.
+  # Adds a second head that predicts every INPUT variable over the target
+  # window, not just the target variable. The auxiliary task is never scored
+  # at validation time — it exists to shape the shared trunk. Measured on a
+  # 4-seed MLP probe over 2022-2025: per-lead rho 0.541 -> 0.571, rho at 12 h
+  # 0.334 -> 0.376, peak rho 0.665 -> 0.679 (see the investigation record).
+  # Requires data.timeseries.dataset_mode="table" and a model with an aux head
+  # (currently the gnn family only).
+  aux_forecast:
+    enabled: false
+    base_loss: "mse"
+    # Weight on the auxiliary term. The probe found EQUAL weighting of ap and
+    # the wind channels best; up-weighting ap to 10x halved the gain, so the
+    # benefit comes from the wind task shaping the trunk, not from ap effort.
+    weight: 1.0
+
   # Contrastive loss (only active when SDO modality is enabled)
   contrastive_loss_type: "consistency"
   contrastive_temperature: 0.3
