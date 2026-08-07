@@ -27,12 +27,15 @@
 #   ./exploration/2026-08/analysis/aux_forecast_probe.sh --io in12h_out12h --model gnn_transformer
 #   ./exploration/2026-08/analysis/aux_forecast_probe.sh --dry-run
 #   ./exploration/2026-08/analysis/aux_forecast_probe.sh --config-name mac_ap \
-#       --variant aux1 --extra "training.epochs=1"      # smoke test
+#       --variant aux1 --extra "training.epochs=1" --tag smoke      # smoke test
 #
-# Results land in $SAVE_ROOT/auxprobe_<target>_<io>_<model>_<variant>[_s<seed>]/ .
-# Compare with:
+# Results land in $SAVE_ROOT/auxprobe[_<tag>]_<target>_<io>_<model>_<variant>[_s<seed>]/ .
+# Score with (the pass mark is on per-lead and peak rho, which only the first
+# of these reports; the second adds MAE, tail reproduction and dispersion):
+#   python exploration/2026-08/analysis/score_per_lead.py \
+#       --results-dir $SAVE_ROOT --group-seeds --prefix auxprobe[_<tag>]_<target>_<io>_<model>
 #   python exploration/2026-08/analysis/compare_loss_variants.py \
-#       --results-dir $SAVE_ROOT --prefix auxprobe_<target>_<io>_<model> --ridge
+#       --results-dir $SAVE_ROOT --prefix auxprobe[_<tag>]_<target>_<io>_<model> --ridge
 
 set -e
 set -f  # list/dict Hydra overrides contain [ ] -- keep the shell from globbing them
@@ -49,6 +52,7 @@ MODEL="gnn_transformer"
 VARIANT=""
 SEEDS=1
 EXTRA=""
+TAG=""
 DRY_RUN=false
 
 while [[ $# -gt 0 ]]; do
@@ -61,13 +65,31 @@ while [[ $# -gt 0 ]]; do
         # extra Hydra overrides appended to every run, e.g. for a smoke test:
         #   --extra "training.epochs=1 experiment.batch_size=64"
         --extra)       EXTRA="$2"; shift 2 ;;
+        # suffix on every experiment name, so a re-run under different settings
+        # lands beside the first one instead of overwriting it. Required
+        # whenever --extra changes training: without it the earlier results are
+        # destroyed and the comparison they were run for is gone.
+        --tag)         TAG="$2"; shift 2 ;;
         --dry-run)     DRY_RUN=true; shift ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
 
+# Changing the training settings without renaming the runs would overwrite the
+# results those settings are meant to be compared against. Refuse rather than
+# silently destroy them.
+if [[ -n "$EXTRA" && -z "$TAG" && "$DRY_RUN" == false ]]; then
+    echo "--extra changes the training settings, so the runs need their own names."
+    echo "Re-run with --tag <name> (e.g. --tag p30) to keep the existing results."
+    exit 1
+fi
+
 # ap or hp, taken from the config name (server_ap -> ap).
 TARGET="${CONFIG_NAME##*_}"
+
+# The tag goes before the target so a tagged sweep and the untagged one are
+# disjoint under --prefix matching, in both directions.
+NAME_BASE="auxprobe${TAG:+_$TAG}_${TARGET}_${IO}_${MODEL}"
 
 # The auxiliary head needs targets the table dataset alone can slice.
 DATASET_MODE="data.timeseries.dataset_mode=table"
@@ -115,7 +137,7 @@ run_one() {
     local variant="$1" seed_idx="$2"
     local extra exp seed_override=""
     extra="$(variant_overrides "$variant")"
-    exp="auxprobe_${TARGET}_${IO}_${MODEL}_${variant}"
+    exp="${NAME_BASE}_${variant}"
     if [[ "$SEEDS" -gt 1 ]]; then
         exp="${exp}_s${seed_idx}"
         seed_override="experiment.seed=$((250104 + seed_idx))"
@@ -154,11 +176,22 @@ done
 echo
 echo "Done. Compare with (substitute your results root; no angle brackets -- the shell would"
 echo "read them as a redirect and argparse then reports a missing --results-dir argument):"
+echo "  python ${PROBE_DIR#$REPO_ROOT/}/score_per_lead.py \\"
+echo "      --results-dir /path/to/results --group-seeds \\"
+echo "      --prefix ${NAME_BASE}"
 echo "  python ${PROBE_DIR#$REPO_ROOT/}/compare_loss_variants.py \\"
 echo "      --results-dir /path/to/results \\"
-echo "      --prefix auxprobe_${TARGET}_${IO}_${MODEL} --ridge"
+echo "      --prefix ${NAME_BASE} --ridge"
 echo
-echo "Pass mark, decided before running: per-lead rho must beat the baseline by more"
-echo "than the seed spread, and peak rho must not fall. The probe predicted +0.030"
-echo "per-lead and +0.014 peak; anything below half of that on the real architecture"
-echo "is a null, not a small win."
+echo "The untagged sweep has already run (2026-08-07, 6 variants x 2 seeds) and FAILED"
+echo "its pass mark: per-lead rho +0.0051 against a predicted +0.030, and peak rho fell"
+echo "0.0039. The effect is real -- seed ranges separate and rho at 12 h moves +0.0185,"
+echo "11x the baseline seed sd, with a clean dose response through aux01 -- but it is a"
+echo "sixth of the size the MLP probe predicted. See measurements/README-coauthor-proposals.md."
+echo
+echo "One confound is identified and open: every run early-stops at epoch 3-6 of 100,"
+echo "and the aux runs stop EARLIER than baseline (3 vs 4-5), so the auxiliary"
+echo "representation is cut off before it can pay. Re-run under a longer patience with"
+echo "  --tag p30 --extra \"training.early_stopping_patience=30\""
+echo "Pass mark for THAT run, fixed in advance: per-lead rho +0.015 or more over the"
+echo "matching baseline, and peak rho not lower. Below that, the feature stays off."

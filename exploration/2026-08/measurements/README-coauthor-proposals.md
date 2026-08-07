@@ -63,6 +63,56 @@ Weighting ap 10x inside the auxiliary loss **halves** it (0.575 → 0.555 at see
 gain is the wind task shaping the trunk, not extra ap effort. Shipped as
 `training.aux_forecast` (off by default); the sweep is `analysis/aux_forecast_probe.sh`.
 
+### On the real architecture it does not hold — the pass mark failed
+
+Run 2026-08-07, `gnn_transformer`, `in12h_out12h`, 6 variants x 2 seeds, scored on the 23,514
+validation anchors with `analysis/score_per_lead.py`.
+
+| variant | mean rho | rho@12h | peak rho | MAE |
+|---|---|---|---|---|
+| baseline | 0.5605 ±0.0008 | 0.3858 ±0.0017 | 0.6946 ±0.0029 | **7.165** |
+| aux1 (w=1, MSE) | **0.5656** ±0.0015 | **0.4043** ±0.0001 | 0.6907 ±0.0004 | 7.258 |
+| aux_mae | 0.5657 ±0.0059 | 0.3977 ±0.0075 | 0.6933 ±0.0032 | 7.450 |
+| aux05 | 0.5652 ±0.0063 | 0.3969 ±0.0089 | 0.6926 ±0.0042 | 7.428 |
+| aux2 | 0.5645 ±0.0011 | 0.4010 ±0.0025 | 0.6884 ±0.0014 | 7.335 |
+| aux01 (w=0.1) | 0.5615 ±0.0022 | 0.3874 ±0.0032 | 0.6952 ±0.0023 | 7.312 |
+
+The pass mark, fixed before the run, was per-lead rho beating baseline by more than half the
+predicted +0.030 with peak rho not falling. **Both clauses fail**: per-lead rho moves +0.0051,
+a sixth of the prediction, and peak rho drops 0.0039. MAE gets worse too.
+
+The effect is nonetheless real rather than noise. Seed ranges do not overlap on mean rho
+(baseline {0.5598, 0.5613} against aux1 {0.5641, 0.5671}); **rho at 12 h moves +0.0185**, some
+11x the baseline seed sd, with the two aux1 seeds landing at 0.4043 and 0.4042; and the dose
+response is clean — w=0.1 sits on the baseline and w=0.5/1/2 saturate together. What the
+architecture does not reproduce is the *size*: the MLP prediction was wrong by a factor of six.
+
+So the honest statement of the finding is narrow: **the auxiliary task improves long-lead
+discrimination by about +0.019 rho and nothing else.** It does not improve the curve as a
+whole, the peak, or the error.
+
+#### One confound is identified and still open
+
+Best epoch, out of 100, patience 10:
+
+| | best epoch |
+|---|---|
+| baseline | 4, 5 |
+| aux1, aux2, aux_mae_s1, aux05_s1 | 3, 3, 3, 3 |
+
+Every run early-stops between 3 and 6, and **the auxiliary runs stop earlier than the
+baseline**. Splitting capacity across 22 channels slows the regression loss's early descent, so
+the stopping rule cuts the run before the representation can pay. The MLP probe had no early
+stopping at all — a fixed 15 epochs on OneCycle — which is one of the three transfer risks
+named in advance, now confirmed as operating.
+
+That is worth exactly one more run, pre-registered:
+`--tag p30 --extra "training.early_stopping_patience=30"`, pass mark per-lead rho +0.015 or
+more over the matching baseline with peak rho not lower. Below that the feature stays off and
+the finding stands as the narrow one above. (The same stopping behaviour has been noted across
+this whole investigation — `analysis/loss_probe.sh` carries a `patience25` variant for it — so
+a positive result there would need re-testing against every other variant, not just this one.)
+
 ## Proposal 2a — 1 h cadence, 7 days of input
 
 Anchors here require 7 clean days of history, so the set is smaller and slightly quieter than
