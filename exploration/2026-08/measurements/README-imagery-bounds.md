@@ -259,3 +259,67 @@ onset windows and the calculation reverses.
 - Ridges, on bow-shock-time data. The ridge tracks the deep model at the baseline, but this
   project's record on ridge-led predictions is one transfer in three — treat the numbers as
   bounds and orders of magnitude, not forecasts of a trained model's score.
+
+---
+
+## 5. The same question inverted — how accurate would it have to be?
+
+Added 2026-08-07, when a foundation-model proposal (Surya) raised a question §4 does not answer.
+§4 asks what the channel is worth at today's arrival accuracy. A learned encoder over full-disk
+SDO is a bid to *beat* today's accuracy, so the decision needs the curve read backwards: how much
+better than today would it have to be. `arrival_accuracy_required.py` sweeps the timing error
+finely and inverts. Same substitution, same detector, same retrain-on-the-degraded-version
+protocol as §4; the perfect and ±6/±10 h rows reproduce §4 to within 0.004, which is what
+licenses the inversion.
+
+| timing error | all anchors | gain | onset windows | gain |
+|---|---|---|---|---|
+| perfect | 0.6062 | **+0.0375** | 0.4823 | **+0.1741** |
+| ± 1 h | 0.6029 | +0.0343 | 0.4549 | +0.1467 |
+| ± 2 h | 0.6008 | +0.0322 | 0.4390 | +0.1308 |
+| ± 3 h | 0.5989 | +0.0302 | 0.4232 | +0.1151 |
+| ± 4 h | 0.5970 | +0.0283 | 0.4116 | +0.1034 |
+| ± 6 h | 0.5927 | +0.0241 | 0.3846 | +0.0765 |
+| ± 10 h | 0.5861 | +0.0175 | 0.3533 | +0.0452 |
+| ± 18 h | 0.5771 | +0.0085 | 0.3254 | +0.0172 |
+| ± 24 h | 0.5741 | +0.0055 | 0.3171 | +0.0090 |
+
+(baseline without arrival information: 0.5686 all, 0.3082 on the 710 onset windows. Twelve jitter
+draws per row.)
+
+| to be worth | all anchors | onset windows |
+|---|---|---|
+| +0.02 | ± 8.6 h | ± 17.2 h |
+| +0.05 | **unreachable** | ± 9.4 h |
+| +0.10 | **unreachable** | ± 4.2 h |
+
+**Two answers, and they point opposite ways.**
+
+**For the pooled twelve-hour curve the verdict hardens and stops depending on any assumption
+about the instrument.** Perfect arrival timing — not achievable timing, *perfect* — is worth
++0.0375. So +0.05 is not on the table at any accuracy, by any pipeline, ever. This is a ceiling
+rather than an accuracy question, and no foundation model changes it. Every earlier statement
+here rested on assuming a pipeline's accuracy; this one does not.
+
+**For storm-onset windows the case is stronger than §4 read.** Those 710 windows are where the
+model is worst (per-lead `rho` 0.308 against 0.569 pooled) and where a warning is the product. At
+the published CME arrival accuracy of ±6–10 h the channel is already worth **+0.045 to +0.077
+there** — 15–25 % relative on the subset that matters — and ±4.2 h would double it. The
+requirement for a foundation model is therefore concrete and checkable against its own literature:
+**beat ±4 h on CME arrival, and it is worth +0.10 on onset windows.**
+
+So "imagery is not worth it for this horizon" was too coarse. The correct split is that imagery
+cannot move the pooled curve materially and can move onset windows substantially, and which of
+those matters depends on whether the product is scored pooled or on onsets. The
+availability-and-warning items in the investigation's §5 are scored the second way.
+
+### What this still does not cover
+
+Everything in "Limits of these bounds" above applies unchanged — timing-only degradation, a crude
+front detector, ridges on bow-shock-time data. Two more specific to the inversion:
+
+- The jitter is uniform and unbiased. A real arrival forecast is biased (CME transit models run
+  systematically early or late by regime), and a bias is easier to correct than a spread, so this
+  is pessimistic in one direction and optimistic in the other.
+- "±4 h on CME arrival" is a requirement on the *arrival* subproblem, not a claim that any
+  particular model reaches it. Checking it is a literature question, not a training run.
