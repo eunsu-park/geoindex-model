@@ -323,3 +323,51 @@ front detector, ridges on bow-shock-time data. Two more specific to the inversio
   is pessimistic in one direction and optimistic in the other.
 - "±4 h on CME arrival" is a requirement on the *arrival* subproblem, not a claim that any
   particular model reaches it. Checking it is a literature question, not a training run.
+
+## 6. Does the bound apply to training from scratch?
+
+Added 2026-08-07. Every bound in this file is a ridge given perfect information, and the question
+a foundation-model proposal raises is whether a model *trained jointly from scratch* faces the
+same ceiling as one that has the bound bolted on. `oracle_nonlinear.py` runs the same feature
+blocks through a ridge and an MLP.
+
+| features | ridge, all | ridge, onset | MLP, all | MLP, onset |
+|---|---|---|---|---|
+| baseline (past only) | **0.5686** | **0.3082** | 0.5040 | 0.2283 |
+| + arrival oracle | **0.6062** | **0.4823** | 0.5595 | 0.4087 |
+| + true future wind | 0.7847 | 0.7821 | **0.8279** | **0.7892** |
+
+**The ordering flips exactly once, and where it flips is the answer.** Without future information
+the ridge wins by 0.065 — the same result as the 14-architecture sweep, where the ridge beat 12 of
+them. Given the arrival oracle it still wins, by 0.047. Given the **true future wind** it loses, by
+0.043. So the wind → index mapping carries nonlinear structure a ridge cannot reach, and the
+past-only and arrival-only problems do not.
+
+Two consequences, pointing different ways.
+
+**The +0.220 full-wind ceiling is a floor, and by more than previously stated.** The earlier
+product experiment moved it 8 %; a deep model moves the absolute score past the ridge's. Any
+number in this investigation of the form "what perfect wind knowledge is worth" understates what a
+well-fitted model would extract. That is an argument *for* joint training against a wind target.
+
+**The arrival ceiling is not shown to be understated.** The deep model does not beat the ridge
+when the extra information is arrival timing and amplitude, which is what a coronagraph channel
+delivers. So §5's pooled ceiling of +0.038 survives the question as asked.
+
+*Caveat that limits both.* This MLP is undertrained — its baseline sits 0.065 below the ridge, so
+part of every "gain over own baseline" is recovery rather than extraction, and the absolute
+comparisons are the only trustworthy ones. A properly tuned deep model would move all six numbers.
+The flip is robust to that (it is a change of sign, not of size), the magnitudes are not.
+
+### What the bound never covered, and still does not
+
+The substitution bounds **the arrival channel**, not **the imagery channel**. The oracle hands the
+model a front step and an amplitude, and that amplitude is a speed jump: it carries nothing about
+the field direction. If a learned encoder could read flux-rope orientation from the eruption's
+magnetic context, it would be supplying information this file never priced — and §1 already
+measured what that is worth, since the sign of Bz alone is +0.083 of the +0.228 total.
+
+That is a real gap rather than a hedge. Nothing here measures it, because measuring it needs a
+different substitution: give the model the true future Bz *sign* and nothing else about Bz. The
+literature position is that remote sensing does not determine 1-AU flux-rope orientation with
+useful skill, and that is the only thing currently standing in the gap.
