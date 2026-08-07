@@ -14,34 +14,41 @@
 # 0.334 -> 0.376, peak rho 0.665 -> 0.679, with non-overlapping seed ranges.
 # This script asks whether it survives on the real architecture.
 #
-# Note the *_w10 variant: in the probe, up-weighting the index 10x inside the
-# auxiliary loss halved the gain. If that reproduces here, the mechanism is the
-# wind task shaping the trunk, not extra index effort -- which is the claim.
+# The aux01 variant is a diagnostic rather than a candidate: if turning the
+# auxiliary term down to a tenth costs the gain while aux05/aux1/aux2 land
+# together, the term is doing work rather than acting as generic regularisation.
 #
 # MC-dropout is off during validation (validation.mcd_samples=0): the probe only
 # needs the deterministic forecast, and that makes each validation ~100x cheaper.
 #
 # Usage:
-#   ./analysis/aux_forecast_probe.sh --config-name server_ap          # all variants
-#   ./analysis/aux_forecast_probe.sh --variant aux1 --seeds 3
-#   ./analysis/aux_forecast_probe.sh --io in12h_out12h --model gnn_transformer
-#   ./analysis/aux_forecast_probe.sh --dry-run
+#   ./exploration/2026-08/analysis/aux_forecast_probe.sh --config-name server_ap          # all variants
+#   ./exploration/2026-08/analysis/aux_forecast_probe.sh --variant aux1 --seeds 3
+#   ./exploration/2026-08/analysis/aux_forecast_probe.sh --io in12h_out12h --model gnn_transformer
+#   ./exploration/2026-08/analysis/aux_forecast_probe.sh --dry-run
+#   ./exploration/2026-08/analysis/aux_forecast_probe.sh --config-name mac_ap \
+#       --variant aux1 --extra "training.epochs=1"      # smoke test
 #
 # Results land in $SAVE_ROOT/auxprobe_<target>_<io>_<model>_<variant>[_s<seed>]/ .
-# Compare with: python analysis/compare_loss_variants.py --results-dir $SAVE_ROOT \
-#                   --prefix auxprobe_<target>_<io>_<model> --ridge
+# Compare with:
+#   python exploration/2026-08/analysis/compare_loss_variants.py \
+#       --results-dir $SAVE_ROOT --prefix auxprobe_<target>_<io>_<model> --ridge
 
 set -e
 set -f  # list/dict Hydra overrides contain [ ] -- keep the shell from globbing them
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$SCRIPT_DIR"
+# This script lives at exploration/<month>/analysis/, so the repo root -- where
+# scripts/train.py is -- is three levels up, not one.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+PROBE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$REPO_ROOT"
 
 CONFIG_NAME="server_ap"
 IO="in12h_out12h"
 MODEL="gnn_transformer"
 VARIANT=""
 SEEDS=1
+EXTRA=""
 DRY_RUN=false
 
 while [[ $# -gt 0 ]]; do
@@ -51,6 +58,9 @@ while [[ $# -gt 0 ]]; do
         --model)       MODEL="$2"; shift 2 ;;
         --variant)     VARIANT="$2"; shift 2 ;;
         --seeds)       SEEDS="$2"; shift 2 ;;
+        # extra Hydra overrides appended to every run, e.g. for a smoke test:
+        #   --extra "training.epochs=1 experiment.batch_size=64"
+        --extra)       EXTRA="$2"; shift 2 ;;
         --dry-run)     DRY_RUN=true; shift ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
@@ -113,8 +123,8 @@ run_one() {
 
     echo "--- [$variant seed $seed_idx] $exp"
     if $DRY_RUN; then
-        echo "    train:    python scripts/train.py --config-name=$CONFIG_NAME +io=$IO +model=$MODEL experiment.name=$exp $DATASET_MODE $extra $seed_override"
-        echo "    validate: python scripts/validate.py --config-name=$CONFIG_NAME +io=$IO +model=$MODEL experiment.name=$exp validation.epoch=best validation.mcd_samples=0 $DATASET_MODE $extra $seed_override"
+        echo "    train:    python scripts/train.py --config-name=$CONFIG_NAME +io=$IO +model=$MODEL experiment.name=$exp $DATASET_MODE $extra $seed_override $EXTRA"
+        echo "    validate: python scripts/validate.py --config-name=$CONFIG_NAME +io=$IO +model=$MODEL experiment.name=$exp validation.epoch=best validation.mcd_samples=0 $DATASET_MODE $extra $seed_override $EXTRA"
         return
     fi
 
@@ -122,11 +132,11 @@ run_one() {
     # train would otherwise fall through to a validate with no checkpoint.
     # shellcheck disable=SC2086
     python scripts/train.py --config-name="$CONFIG_NAME" +io="$IO" +model="$MODEL" \
-        experiment.name="$exp" $DATASET_MODE $extra $seed_override || return 1
+        experiment.name="$exp" $DATASET_MODE $extra $seed_override $EXTRA || return 1
     # shellcheck disable=SC2086
     python scripts/validate.py --config-name="$CONFIG_NAME" +io="$IO" +model="$MODEL" \
         experiment.name="$exp" validation.epoch=best validation.mcd_samples=0 \
-        $DATASET_MODE $extra $seed_override || return 1
+        $DATASET_MODE $extra $seed_override $EXTRA || return 1
 }
 
 # One run failing must not abandon the rest of the sweep.
@@ -144,7 +154,8 @@ done
 echo
 echo "Done. Compare with (substitute your results root; no angle brackets -- the shell would"
 echo "read them as a redirect and argparse then reports a missing --results-dir argument):"
-echo "  python analysis/compare_loss_variants.py --results-dir /path/to/results \\"
+echo "  python ${PROBE_DIR#$REPO_ROOT/}/compare_loss_variants.py \\"
+echo "      --results-dir /path/to/results \\"
 echo "      --prefix auxprobe_${TARGET}_${IO}_${MODEL} --ridge"
 echo
 echo "Pass mark, decided before running: per-lead rho must beat the baseline by more"

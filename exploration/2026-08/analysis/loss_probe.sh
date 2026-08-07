@@ -19,8 +19,10 @@
 set -e
 set -f  # the list/dict Hydra overrides contain [ ] -- keep the shell from globbing them
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$SCRIPT_DIR"
+# This script was written at analysis/ in the repo root and later moved under
+# exploration/<month>/analysis/, so the root is three levels up, not one.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+cd "$REPO_ROOT"
 
 CONFIG_NAME="server_ap"
 IO="in12h_out12h"
@@ -171,5 +173,5 @@ done
 echo
 echo "Done. Compare with (substitute your results root; no angle brackets -- the shell would"
 echo "read them as a redirect and argparse then reports a missing --results-dir argument):"
-echo "  python analysis/compare_loss_variants.py --results-dir /path/to/results \\"
+echo "  python exploration/2026-08/analysis/compare_loss_variants.py --results-dir /path/to/results \\"
 echo "      --prefix probe_${TARGET}_${IO}_${MODEL} --ridge"
