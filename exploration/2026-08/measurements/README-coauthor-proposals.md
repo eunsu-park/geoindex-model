@@ -43,7 +43,11 @@ The mechanism is visible directly. Fraction of the observed standard deviation t
 The rollout does not forecast the wind, it relaxes it to climatology. Past ~3 h the model is
 coasting on an input that has already gone flat.
 
-## The half of proposal 1 that works
+## The half of proposal 1 that looked promising — and did not survive
+
+**Verdict up front: it failed its pass mark on the real architecture.** The MLP result below is
+kept because it is what motivated the feature and because the size of its error is the point;
+read it with the two subsections that follow it.
 
 "Forecast every parameter" and "roll a one-step model out" arrived together and are separable.
 Predicting all 22 channels **directly** at all 24 leads, scored on the ap slice only, 4 seeds:
@@ -56,12 +60,15 @@ Predicting all 22 channels **directly** at all 24 leads, scored on the ap slice 
 | MAE | 7.119 ±0.014 | 6.938 ±0.014 | −0.181 |
 | peak rho | 0.6645 ±0.0021 | 0.6788 ±0.0025 | +0.0143 |
 
-Seed ranges do not overlap on any row; the gap is ~10x the seed spread. This is the largest
-model-side gain in the investigation — the previous best was the peak head at +0.017.
+Seed ranges do not overlap on any row; the gap is ~10x the seed spread — on an MLP. Reported at
+the time as the largest model-side gain in the investigation, beating the peak head's +0.017.
+**That reading is retracted:** it did not transfer, and the transfer risks were named before the
+real run rather than after it.
 
 Weighting ap 10x inside the auxiliary loss **halves** it (0.575 → 0.555 at seed 0), so the
-gain is the wind task shaping the trunk, not extra ap effort. Shipped as
-`training.aux_forecast` (off by default); the sweep is `analysis/aux_forecast_probe.sh`.
+gain is the wind task shaping the trunk, not extra ap effort — on an MLP. Shipped as
+`training.aux_forecast` (off by default, and it stays off); the sweep is
+`analysis/aux_forecast_probe.sh`.
 
 ### On the real architecture it does not hold — the pass mark failed
 
@@ -91,122 +98,33 @@ So the honest statement of the finding is narrow: **the auxiliary task improves 
 discrimination by about +0.019 rho and nothing else.** It does not improve the curve as a
 whole, the peak, or the error.
 
-#### One confound is identified and still open
+#### The confound was tested and is not the explanation
 
-Best epoch, out of 100, patience 10:
+Best epoch, out of 100:
 
-| | best epoch |
-|---|---|
-| baseline | 4, 5 |
-| aux1, aux2, aux_mae_s1, aux05_s1 | 3, 3, 3, 3 |
+| run | patience 10 | patience 30 |
+|---|---|---|
+| baseline_s0 | 5 (15 epochs run) | **5** (35 run) |
+| baseline_s1 | 4 (14 run) | **4** (34 run) |
+| aux1_s0 | 3 (13 run) | **3** (33 run) |
+| aux1_s1 | 3 (13 run) | **3** (33 run) |
 
-Every run early-stops between 3 and 6, and **the auxiliary runs stop earlier than the
-baseline**. Splitting capacity across 22 channels slows the regression loss's early descent, so
-the stopping rule cuts the run before the representation can pay. The MLP probe had no early
-stopping at all — a fixed 15 epochs on OneCycle — which is one of the three transfer risks
-named in advance, now confirmed as operating.
+Every run early-stops between epoch 3 and 6 of 100, and the auxiliary runs stop earlier than the
+baseline (3 against 4–5), which looked like the stopping rule cutting the representation off
+before it could pay — the MLP probe had no early stopping at all, a fixed 15 epochs on OneCycle,
+and that was one of the three transfer risks named in advance.
 
-That is worth exactly one more run, pre-registered:
-`--tag p30 --extra "training.early_stopping_patience=30"`, pass mark per-lead rho +0.015 or
-more over the matching baseline with peak rho not lower. Below that the feature stays off and
-the finding stands as the narrow one above. (The same stopping behaviour has been noted across
-this whole investigation — `analysis/loss_probe.sh` carries a `patience25` variant for it — so
-a positive result there would need re-testing against every other variant, not just this one.)
+Tripling the patience refutes it. The patience-30 runs really did train 33–35 epochs, and the
+best epoch and best validation regression loss are **unchanged to five decimals**; thirty further
+epochs found nothing better. Training is deterministic given the seed, so the selected checkpoint
+is the same file and the validation scores are identical digit for digit. The validation loss
+genuinely bottoms early and does not recover.
 
-## Proposal 2a — 1 h cadence, 7 days of input
+That closes the auxiliary question — `training.aux_forecast` stays off by default, and the
+finding stands as the narrow one above.
 
-Anchors here require 7 clean days of history, so the set is smaller and slightly quieter than
-elsewhere; read the rows against each other, not against other tables.
-
-| input | cols | mean rho | peak rho | MAE |
-|---|---|---|---|---|
-| 1–3 h @ 30 min | 45–133 | **0.5833** | 0.663 | 7.43 |
-| 12 h @ 30 min | 529 | 0.5764 | 0.660 | 7.49 |
-| 12 h @ 1 h | 265 | 0.5545 | 0.636 | 7.65 |
-| **7 d @ 1 h (the proposal)** | 3697 | **0.5287** | 0.622 | 8.31 |
-| 12 h fine + 1/3/7 d summaries | 541 | 0.5781 | 0.661 | 7.49 |
-
-The worst configuration tested. Downsampling 30 min → 1 h costs −0.022 on its own; the length
-takes the rest. The 7 day span is not worthless — as four summary scalars it is slightly
-positive — but as 168 raw timesteps it is a liability.
-
-## Proposal 2b — forecast ap hourly, then interpolate to 30 min from earlier ap and Bz
-
-`ap30` against the `ap60` of its own hour: rho **0.960**, 92.0 % of the variance already
-fixed, residual sd 4.51 ap.
-
-The remaining within-hour split, with the true `ap60` handed over for free:
-
-| lead | 0.5 h | 1.5 h | 2.5 h | 3.5 h+ |
-|---|---|---|---|---|
-| rho from anchor data | 0.180 | 0.036 | 0.009 | ≤0.03 |
-| variance explained | 0.032 | 0.001 | 0.000 | ≤0.001 |
-
-End to end, against the same ap30 targets:
-
-| scheme | mean rho | RMSE | MAE | peak rho |
-|---|---|---|---|---|
-| direct 30 min | 0.590 | 13.201 | 7.080 | 0.675 |
-| hourly + constant fill | 0.590 | 13.212 | 7.102 | 0.680 |
-| hourly + learned split | 0.590 | 13.201 | 7.080 | 0.675 |
-| *(perfect ap60 + constant fill)* | *0.954* | *4.999* | *2.495* | *0.982* |
-
-The learned split is indistinguishable from copying the hourly value into both halves. Its
-whole budget is the 4.51 ap of within-hour structure, and the hourly forecast currently errs
-by 13.2 — the correction is buried. It would only surface once the hourly model is ~2.5x
-better, and the row above says it would not be recoverable from ap and Bz history even then.
-
-## What all three proposals are really bets on
-
-Same anchors, same targets, past 12 h of everything plus the **true** future wind out to
-`delta`:
-
-| known future wind | mean rho | rho@12h | peak rho | POD(ap≥100) | gain |
-|---|---|---|---|---|---|
-| none (current design) | 0.594 | 0.405 | 0.681 | 0.411 | — |
-| all channels, +1 h | 0.622 | 0.428 | 0.709 | 0.443 | +0.029 |
-| all channels, +3 h | 0.676 | 0.474 | 0.756 | 0.503 | +0.083 |
-| all channels, +6 h | 0.743 | 0.543 | 0.807 | 0.562 | +0.149 |
-| **all channels, +12 h** | **0.813** | **0.792** | **0.862** | **0.651** | **+0.220** |
-
-On the nonlinear model the same oracle runs 0.539 → **0.843**, rho at 12 h 0.337 → **0.833**.
-
-Split by channel, each given the full 12 h:
-
-| channel | gain |
-|---|---|
-| **Bz (3 cols)** | **+0.166** |
-| \|B\| (3 cols) | +0.109 |
-| V (3 cols) | +0.048 |
-| Bz + V | +0.175 |
-
-The ap forecasting problem is the Bz forecasting problem. Loss, architecture, cadence and
-input length rearrange information the model already has, and the best any of them returned in
-this investigation is +0.017. The **smallest** row in the table above is worth twice that.
-
-The oracle is not attainable — that is the point of calling it one. It prices the bet, and it
-says any proposal that does not add an exogenous driver for the wind is competing for the
-scraps.
-
-## On the imagery half of proposal 2
-
-Solar imagery is the only exogenous driver on the table, so it aims at the right prize. Two
-things bound what it can collect.
-
-The prize is specifically Bz, and imagery has no established skill for ICME internal field
-orientation at 1 AU; its established skill is arrival time and speed. In the table above that
-is the V (+0.048) and |B| (+0.109) share, not the Bz (+0.166) share.
-
-And SDO starts in 2010-05. Training anchors surviving that cut, by storm size:
-
-| 12 h peak ap | 1995+ | 2010.5+ | kept |
-|---|---|---|---|
-| ≥ 0 | 471,888 | 203,136 | 43.0 % |
-| ≥ 50 | 45,833 | 14,134 | 30.8 % |
-| ≥ 100 | 10,742 | 2,848 | 26.5 % |
-| ≥ 200 | 2,142 | 272 | **12.7 %** |
-| ≥ 400 | 161 | 0 | **0 %** |
-
-Cycle 23 maximum and the 2003 Halloween storm (12 h peak ap 617) leave entirely. Imagery must
-therefore be an optional auxiliary channel behind a missing-data mask, never a required input,
-with the backbone trained on 1995+ and the imagery adapter fitted on 2010+ only.
+It also clears a worry this raised about the rest of the investigation. If patience 10 had been
+binding, every null measured under it would have been suspect, including the 24 loss-probe
+variants. It was not binding, so those nulls do not need re-testing on these grounds. Directly
+measured on the baseline and aux1 configurations only, but all twelve runs bottom in the same
+3–6 epoch band, so the mechanism looks common rather than particular.
