@@ -85,9 +85,10 @@ fi
 #   --config-name server_hp`.
 # =============================================================================
 case "$CONFIG_NAME" in
-    server_ap) EXP_PREFIX="ap_" ;;
-    server_hp) EXP_PREFIX="hp_" ;;
-    *)         EXP_PREFIX="" ;;
+    server_ap)           EXP_PREFIX="ap_" ;;
+    server_ap_recursive) EXP_PREFIX="ap_recursive_" ;;
+    server_hp)           EXP_PREFIX="hp_" ;;
+    *)                   EXP_PREFIX="" ;;
 esac
 EXTRA_ARGS=()
 if [[ "$CONFIG_NAME" == "server_hp" ]]; then
@@ -105,6 +106,13 @@ IO_CONFIGS=(
     in2d_out6h  in2d_out12h  in2d_out18h  in2d_out24h
     in3d_out6h  in3d_out12h  in3d_out18h  in3d_out24h
 )
+
+# The recursive variant only trains the 6-h output chunk (see
+# configs/server_ap_recursive.yaml), so scan just those experiments.
+if [[ "$CONFIG_NAME" == "server_ap_recursive" ]]; then
+    IO_CONFIGS=(in6h_out6h in12h_out6h in18h_out6h
+                in1d_out6h in2d_out6h in3d_out6h)
+fi
 
 ALL_MODELS=(linear transformer tcn patchtst timesnet lstm bilstm
             gnn_transformer gnn_tcn gnn_bilstm gnn_patchtst

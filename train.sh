@@ -75,10 +75,18 @@ done
 # Other profiles (local/dev/...) keep the legacy un-prefixed names.
 # =============================================================================
 case "$CONFIG_NAME" in
-    server_ap) EXP_PREFIX="ap_" ;;
-    server_hp) EXP_PREFIX="hp_" ;;
-    *)         EXP_PREFIX="" ;;
+    server_ap)           EXP_PREFIX="ap_" ;;
+    server_ap_recursive) EXP_PREFIX="ap_recursive_" ;;
+    server_hp)           EXP_PREFIX="hp_" ;;
+    *)                   EXP_PREFIX="" ;;
 esac
+
+# The recursive variant is trained on the 6-h output chunk only (longer
+# leads come from rollout at evaluation time), so restrict the io matrix
+# to *_out6h unless the caller narrowed it further.
+if [[ "$CONFIG_NAME" == "server_ap_recursive" && -z "$FILTER" ]]; then
+    FILTER="out6h"
+fi
 
 # hp uses SW + hp30 inputs, so the inherited ap30 GNN node must be dropped
 # (Hydra deep-merges dicts, so it cannot be removed from within server_hp.yaml).
