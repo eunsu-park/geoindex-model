@@ -1,0 +1,62 @@
+# Server configuration for the RECURSIVE ap30 variant (E1 deep arm).
+#
+# Same input as server_ap (21 solar-wind columns + ap30), but the model
+# predicts ALL 22 input channels over the target window instead of ap30
+# alone, so the output chunk can be fed back as input for an iterated
+# (recursive) rollout. Trained only on the *_out6h io windows (6-h chunk);
+# longer leads are reached at evaluation time by rolling the chunk forward.
+#
+# Differences from server_ap:
+#   - target_variables = input_variables (22 channels, same order — the
+#     rollout appends the predicted chunk to the input window without
+#     any channel reindexing; ap30 is the last channel).
+#   - regression_loss_type = mse. solar_wind_weighted takes
+#     target_variables[0]'s normalization stats and applies ap-tier
+#     weighting across the whole target tensor, which is wrong for a
+#     22-channel mixed-normalization target. Equal per-channel MSE also
+#     matches the aux-forecast probe finding (equal weighting best).
+#
+# Experiment naming: train.sh / run_pending.sh prefix runs from this
+# profile with "ap_recursive_" (e.g. ap_recursive_in2d_out6h_gnn_transformer),
+# so they never collide with the direct ap_* results.
+#
+# Launch (GPU server):
+#   ./train.sh --config-name server_ap_recursive
+#   (the out6h io filter is applied automatically by train.sh)
+
+defaults:
+  - server_ap
+  - _self_
+
+data:
+  timeseries:
+    # Predict every input channel over the target window (same order as
+    # data.timeseries.input_variables in base.yaml).
+    target_variables:
+      - "v_avg"
+      - "v_min"
+      - "v_max"
+      - "np_avg"
+      - "np_min"
+      - "np_max"
+      - "t_avg"
+      - "t_min"
+      - "t_max"
+      - "bx_avg"
+      - "bx_min"
+      - "bx_max"
+      - "by_avg"
+      - "by_min"
+      - "by_max"
+      - "bz_avg"
+      - "bz_min"
+      - "bz_max"
+      - "bt_avg"
+      - "bt_min"
+      - "bt_max"
+      - "ap30"
+
+training:
+  # See header: solar_wind_weighted is ap30-specific; the multi-channel
+  # head trains on plain MSE in normalized space.
+  regression_loss_type: "mse"
