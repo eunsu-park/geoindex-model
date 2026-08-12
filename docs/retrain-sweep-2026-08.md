@@ -88,19 +88,33 @@ Logs: `~/tmp/train_logs/{experiment}.log`.
 
 ## 3. Per-sample plots (on demand, after validation)
 
-Sweeps run with `validation.save_plots: false`; regenerate plots for a
-selected run from its validation archive (no model/GPU needed — reads
-`validation/<epoch>/npz.zip`):
+Sweeps run with `validation.save_plots: false`; regenerate plots from the
+validation archives (no model/GPU needed — reads
+`validation/<epoch>/npz.zip`).
+
+Scale check before a full render: one full-period validation index is
+~23,514 anchors per run at ~51 KB per PNG, so the whole 336-run direct
+sweep is ~7.9M plots / **~385 GB**. Run it on the GPU server (the archives
+are local there — on a cloud-synced replica every npz.zip must download
+first) and point `--output-root` OUTSIDE the synced tree:
 
 ```bash
+# whole direct sweep, resumable (existing PNGs are skipped)
+nohup python analysis/plot_validation_samples.py \
+    --results-dir /home/eunsupark/Projects/GeoIndex/results \
+    --filter '^ap_in(6h|12h|18h|1d)_out[1-6]h_' \
+    --output-root /home/eunsupark/plots_sweepA_2026-08 \
+    --workers 12 > ~/tmp/plot_sweepA.log 2>&1 &
+
+# single run / quick look
 python analysis/plot_validation_samples.py \
     --results-dir /home/eunsupark/Projects/GeoIndex/results \
-    --experiment ap_recursive_in12h_out6h_gnn_transformer --workers 8
+    --experiment ap_in12h_out6h_linear --output-root /tmp/plots --limit 20
 ```
 
-Recursive runs render the grouped envelope-band layout automatically;
-direct runs keep the classic single-panel layout. `--filter recursive`
-sweeps all matching runs; `--limit 20` for a quick look.
+`--filter` is a regex on run names. Recursive runs render the grouped
+envelope-band layout automatically; direct runs keep the classic
+single-panel layout.
 
 ## Notes and caveats
 
