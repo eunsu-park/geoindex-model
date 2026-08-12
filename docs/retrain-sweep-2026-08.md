@@ -6,8 +6,14 @@ Two sweeps on the GPU server, both ap30-side only (no hp30), both with
 
 | Sweep | Profile | Experiments | Target head | Loss |
 |---|---|---|---|---|
-| A — direct retrain | `server_ap` | 24 io × 14 models = **336**, names `ap_{io}_{model}` | ap30 (1 ch) | solar_wind_weighted |
+| A — direct, short-horizon | `server_ap` | in {6h,12h,18h,1d} × out {1h..6h} × 14 models = **336**, names `ap_{io}_{model}` | ap30 (1 ch) | solar_wind_weighted |
 | B — recursive | `server_ap_recursive` | 6 in-lengths × out6h × 14 models = **84**, names `ap_recursive_{io}_{model}` | all 22 input channels | mse |
+
+Sweep A (revised 2026-08-12) is the short-horizon grid: 20 new io configs
+`in{6h,12h,18h,1d}_out{1..5}h` plus the existing `*_out6h` four. `train.sh`
+and `run_pending.sh` apply this grid automatically for `server_ap`; the
+legacy long-horizon grid (out12h/18h/24h, in2d/3d) remains available via an
+explicit `--filter`, and stays the scan matrix for `server_hp`.
 
 Sweep B (`configs/server_ap_recursive.yaml`) predicts every input variable
 over a 6-h chunk so the chunk can be fed back for an iterated rollout to
@@ -18,19 +24,22 @@ the direct `ap_*` results.
 
 ## 0. Before launching sweep A — archive the previous mainline results
 
-Sweep A reuses the canonical experiment names, so the trainer would write
-into the existing `ap_{io}_{model}` directories under
-`/home/eunsupark/Projects/GeoIndex/results`. Archive the 336 mainline dirs
-first (CV fold dirs `*_fold[1-5]` stay — sweep A does not retrain CV):
+With the short-horizon grid, sweep A collides with existing results only on
+the four `*_out6h` io combos (`ap_in{6h,12h,18h,1d}_out6h_{model}`, 56 dirs)
+under `/home/eunsupark/Projects/GeoIndex/results`. Archive those before
+launching (CV fold dirs `*_fold[1-5]` stay; the legacy long-horizon results
+that are not being retrained also stay):
 
 ```bash
 cd /home/eunsupark/Projects/GeoIndex/results
 mkdir -p _archive_pre-retrain-2026-08
-for d in ap_in*_out*; do
-    [[ "$d" == *_fold* ]] && continue      # keep CV fold results
-    mv "$d" _archive_pre-retrain-2026-08/
+for io in in6h_out6h in12h_out6h in18h_out6h in1d_out6h; do
+    for d in ap_${io}_*; do
+        [[ "$d" == *_fold* ]] && continue  # keep CV fold results
+        [[ -d "$d" ]] && mv "$d" _archive_pre-retrain-2026-08/
+    done
 done
-ls _archive_pre-retrain-2026-08 | wc -l    # expect 336
+ls _archive_pre-retrain-2026-08 | wc -l    # expect 56
 ```
 
 This is a rename inside the cloud-synced tree (cheap for the sync client)
