@@ -13,6 +13,10 @@
 #   ./train.sh --max-jobs 4                     # Limit to 4 parallel jobs
 #   ./train.sh --dry-run                        # Print configs without running
 #   ./train.sh --config-name dev                # Use configs/dev.yaml (default: local)
+#   ./train.sh --skip-existing                  # Skip completed runs (config-group
+#                                               # mode only; a run counts as completed
+#                                               # when {save_root}/{exp}/log/
+#                                               # training_history.json exists)
 #
 # Usage (file-based):
 #   ./train.sh --config-file list.txt           # Run configs from file
@@ -34,6 +38,7 @@ FILTER=""
 MODEL_FILTER=""
 DRY_RUN=false
 CONFIG_NAME="local"
+SKIP_EXISTING=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -57,13 +62,17 @@ while [[ $# -gt 0 ]]; do
             DRY_RUN=true
             shift
             ;;
+        --skip-existing)
+            SKIP_EXISTING=true
+            shift
+            ;;
         --config-name)
             CONFIG_NAME="$2"
             shift 2
             ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: ./train.sh [--config-file FILE] [--max-jobs N] [--filter PATTERN] [--model MODEL] [--dry-run] [--config-name NAME]"
+            echo "Usage: ./train.sh [--config-file FILE] [--max-jobs N] [--filter PATTERN] [--model MODEL] [--dry-run] [--config-name NAME] [--skip-existing]"
             exit 1
             ;;
     esac
@@ -82,10 +91,10 @@ case "$CONFIG_NAME" in
 esac
 
 # The recursive variant is trained on the 6-h output chunk only (longer
-# leads come from rollout at evaluation time), so restrict the io matrix
-# to *_out6h unless the caller narrowed it further.
+# leads come from rollout at evaluation time) and, per the 2026-08 run
+# scope, only on the {6h,12h,18h,1d} input lengths.
 if [[ "$CONFIG_NAME" == "server_ap_recursive" && -z "$FILTER" ]]; then
-    FILTER="out6h"
+    FILTER="in(6h|12h|18h|1d)_out6h$"
 fi
 
 # The 2026-08 direct ap sweep is the short-horizon grid: input {6h,12h,18h,1d}
@@ -93,6 +102,40 @@ fi
 # override (e.g. for the legacy long-horizon grid).
 if [[ "$CONFIG_NAME" == "server_ap" && -z "$FILTER" ]]; then
     FILTER="in(6h|12h|18h|1d)_out[1-6]h$"
+fi
+
+# =============================================================================
+# Completed-run detection (--skip-existing)
+# A run counts as completed when {save_root}/{exp}/log/training_history.json
+# exists — scripts/train.py writes it only after fit() returns normally, so
+# interrupted runs are re-queued. save_root is resolved by walking the config
+# inheritance chain (defaults:), or taken from the SAVE_ROOT env var.
+# =============================================================================
+SKIPPED=0
+if $SKIP_EXISTING; then
+    if [[ -z "${SAVE_ROOT:-}" ]]; then
+        cfg="$CONFIG_NAME"
+        for _ in 1 2 3 4 5; do
+            cfg_path="configs/${cfg}.yaml"
+            [[ -f "$cfg_path" ]] || break
+            SAVE_ROOT=$(grep -E "^[[:space:]]*save_root:" "$cfg_path" | head -1 \
+                | sed -E 's/.*save_root:[[:space:]]*"?([^"]*)"?.*/\1/')
+            [[ -n "$SAVE_ROOT" ]] && break
+            cfg=$(awk '/^defaults:/{f=1;next}
+                       f && /^[^ -]/{exit}
+                       f && /^[[:space:]]*-[[:space:]]*[a-zA-Z]/{
+                           sub(/^[[:space:]]*-[[:space:]]*/,"");
+                           if ($1 != "override" && $1 != "_self_") {print $1; exit}
+                       }' "$cfg_path")
+            [[ -z "$cfg" ]] && break
+        done
+    fi
+    if [[ -z "${SAVE_ROOT:-}" || ! -d "$SAVE_ROOT" ]]; then
+        echo "ERROR: --skip-existing needs a valid save_root for '$CONFIG_NAME'" \
+             "(resolved: '${SAVE_ROOT:-<none>}', not a directory)."
+        echo "       Set the SAVE_ROOT env var explicitly."
+        exit 1
+    fi
 fi
 
 # hp uses SW + hp30 inputs, so the inherited ap30 GNN node must be dropped
@@ -141,6 +184,10 @@ else
     for io in "${IO_CONFIGS[@]}"; do
         for mdl in "${MODEL_CONFIGS[@]}"; do
             exp_name="${EXP_PREFIX}${io}_${mdl}"
+            if $SKIP_EXISTING && [[ -f "$SAVE_ROOT/${exp_name}/log/training_history.json" ]]; then
+                SKIPPED=$((SKIPPED + 1))
+                continue
+            fi
             CONFIGS+=("+io=${io} +model=${mdl} experiment.name=${exp_name}")
             DISPLAY_NAMES+=("${exp_name}")
         done
@@ -149,6 +196,10 @@ fi
 
 TOTAL=${#CONFIGS[@]}
 if [[ $TOTAL -eq 0 ]]; then
+    if [[ $SKIPPED -gt 0 ]]; then
+        echo "All $SKIPPED matching runs are already completed. Nothing to do."
+        exit 0
+    fi
     echo "No configs found (config-file: '$CONFIG_FILE', filter: '$FILTER', model: '$MODEL_FILTER')"
     exit 1
 fi
@@ -167,6 +218,9 @@ echo "Filter:        ${FILTER:-none}"
 echo "Model:         ${MODEL_FILTER:-all}"
 echo "Config name:   $CONFIG_NAME"
 echo "Exp prefix:    ${EXP_PREFIX:-<none>}"
+if $SKIP_EXISTING; then
+    echo "Skipped done:  $SKIPPED (save_root: $SAVE_ROOT)"
+fi
 echo "========================================"
 echo ""
 
