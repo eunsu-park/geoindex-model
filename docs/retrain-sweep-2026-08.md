@@ -7,7 +7,7 @@ Two sweeps on the GPU server, both ap30-side only (no hp30), both with
 | Sweep | Profile | Experiments | Target head | Loss |
 |---|---|---|---|---|
 | A — direct, short-horizon | `server_ap` | in {6h,12h,18h,1d} × out {1h..6h} × 14 models = **336**, names `ap_{io}_{model}` | ap30 (1 ch) | solar_wind_weighted |
-| B — recursive | `server_ap_recursive` | 6 in-lengths × out6h × 14 models = **84**, names `ap_recursive_{io}_{model}` | all 22 input channels | mse |
+| B — recursive | `server_ap_recursive` | in {6h,12h,18h,1d} × out6h × 14 models = **56**, names `ap_recursive_{io}_{model}` | all 22 input channels | mse |
 
 Sweep A (revised 2026-08-12) is the short-horizon grid: 20 new io configs
 `in{6h,12h,18h,1d}_out{1..5}h` plus the existing `*_out6h` four. `train.sh`
@@ -53,13 +53,29 @@ cd ~/GitHub/njit-geoindex/geoindex-model   # or the server checkout path
 # Sweep A — 336 direct models
 ./train.sh --config-name server_ap --max-jobs 4
 
-# Sweep B — 84 recursive models
+# Sweep B — 56 recursive models
 ./train.sh --config-name server_ap_recursive --max-jobs 4
 ```
 
 `--max-jobs 4` matches `environment.num_workers: 4` in `server_ap.yaml`
 (4 jobs × 4 loader workers on the single RTX 3090). Sanity-check the queue
-first with `--dry-run` (A prints 336 configs, B prints 84).
+first with `--dry-run` (A prints 336 configs, B prints 56).
+
+Restarting an interrupted or re-scoped sweep: add `--skip-existing` — runs
+whose `{save_root}/{exp}/log/training_history.json` exists (written only on
+normal completion) are dropped from the queue; interrupted runs re-train
+from scratch.
+
+Sweep B was scoped down on 2026-08-12 (run in flight): the in2d/in3d input
+lengths were dropped (84 → 56). To apply mid-run: stop the launcher
+(Ctrl-C, or `pkill -f "config-name=server_ap_recursive"`), `git pull`, then
+
+```bash
+./train.sh --config-name server_ap_recursive --max-jobs 4 --skip-existing
+```
+
+Any already-finished `ap_recursive_in2d/in3d_*` results are simply extra
+data — the narrowed filter and run_pending matrix no longer touch them.
 
 Logs: `~/tmp/train_logs/{experiment}.log`.
 
