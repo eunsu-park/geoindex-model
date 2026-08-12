@@ -7,7 +7,8 @@ import numpy as np
 import pytest
 import torch
 
-from src.plotting import extract_file_names, denormalize_arrays, plot_prediction_timeseries
+from src.plotting import (extract_file_names, denormalize_arrays,
+                          plot_prediction_timeseries, group_variable_triplets)
 
 
 # ---------------------------------------------------------------------------
@@ -188,4 +189,74 @@ class TestPlotPredictionTimeseries:
             targets=np.random.randn(24, 2),
         )
 
+        assert save_path.exists()
+
+
+# ---------------------------------------------------------------------------
+# group_variable_triplets / grouped band layout
+# ---------------------------------------------------------------------------
+RECURSIVE_VARS = [
+    f"{base}_{suffix}"
+    for base in ['v', 'np', 't', 'bx', 'by', 'bz', 'bt']
+    for suffix in ['avg', 'min', 'max']
+] + ['ap30']
+
+
+class TestGroupVariableTriplets:
+    """Tests for group_variable_triplets()."""
+
+    def test_recursive_target_set(self):
+        """22 recursive channels collapse to 8 groups in input order."""
+        groups = group_variable_triplets(RECURSIVE_VARS)
+        assert groups is not None
+        assert [name for name, _ in groups] == [
+            'v', 'np', 't', 'bx', 'by', 'bz', 'bt', 'ap30']
+        v_members = groups[0][1]
+        assert set(v_members) == {'avg', 'min', 'max'}
+        assert v_members['avg'] == RECURSIVE_VARS.index('v_avg')
+        # ap30 singleton carries only the avg key
+        assert groups[-1][1] == {'avg': RECURSIVE_VARS.index('ap30')}
+
+    def test_single_target_returns_none(self):
+        """Single-target runs keep the per-variable layout."""
+        assert group_variable_triplets(['ap30']) is None
+
+    def test_two_singletons_return_none(self):
+        """No collapse -> None (e.g. ap30 + hp30)."""
+        assert group_variable_triplets(['ap30', 'hp30']) is None
+
+    def test_incomplete_triplet_returns_none(self):
+        """An incomplete triplet falls back to singletons, no collapse."""
+        assert group_variable_triplets(['v_avg', 'v_min']) is None
+
+
+class TestGroupedBandPlot:
+    """Grouped envelope-band layout via plot_prediction_timeseries()."""
+
+    def test_recursive_targets_render(self, tmp_path):
+        """22-channel recursive targets render the grouped layout."""
+        save_path = tmp_path / "band.png"
+        n = len(RECURSIVE_VARS)
+        plot_prediction_timeseries(
+            inputs=np.random.randn(48, n),
+            predictions=np.random.randn(12, n),
+            input_variables=RECURSIVE_VARS,
+            target_variables=RECURSIVE_VARS,
+            save_path=save_path,
+            targets=np.random.randn(12, n),
+        )
+        assert save_path.exists()
+
+    def test_recursive_targets_without_ground_truth(self, tmp_path):
+        """Test-mode rendering (no targets) also works."""
+        save_path = tmp_path / "band_notarget.png"
+        n = len(RECURSIVE_VARS)
+        plot_prediction_timeseries(
+            inputs=np.random.randn(48, n),
+            predictions=np.random.randn(12, n),
+            input_variables=RECURSIVE_VARS,
+            target_variables=RECURSIVE_VARS,
+            save_path=save_path,
+            targets=None,
+        )
         assert save_path.exists()

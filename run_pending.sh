@@ -114,6 +114,18 @@ if [[ "$CONFIG_NAME" == "server_ap_recursive" ]]; then
                 in1d_out6h in2d_out6h in3d_out6h)
 fi
 
+# The 2026-08 direct ap sweep uses the short-horizon grid:
+# input {6h,12h,18h,1d} x output {1h..6h}. The legacy grid above stays for
+# server_hp (hp results exist on it) and the local/dev profiles.
+if [[ "$CONFIG_NAME" == "server_ap" ]]; then
+    IO_CONFIGS=()
+    for _in in in6h in12h in18h in1d; do
+        for _out in out1h out2h out3h out4h out5h out6h; do
+            IO_CONFIGS+=("${_in}_${_out}")
+        done
+    done
+fi
+
 ALL_MODELS=(linear transformer tcn patchtst timesnet lstm bilstm
             gnn_transformer gnn_tcn gnn_bilstm gnn_patchtst
             gnn_lstm gnn_timesnet gnn_linear)
