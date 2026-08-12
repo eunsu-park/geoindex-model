@@ -86,6 +86,22 @@ Logs: `~/tmp/train_logs/{experiment}.log`.
 ./run_pending.sh --config-name server_ap_recursive --epoch best --max-jobs 4
 ```
 
+## 3. Per-sample plots (on demand, after validation)
+
+Sweeps run with `validation.save_plots: false`; regenerate plots for a
+selected run from its validation archive (no model/GPU needed — reads
+`validation/<epoch>/npz.zip`):
+
+```bash
+python analysis/plot_validation_samples.py \
+    --results-dir /home/eunsupark/Projects/GeoIndex/results \
+    --experiment ap_recursive_in12h_out6h_gnn_transformer --workers 8
+```
+
+Recursive runs render the grouped envelope-band layout automatically;
+direct runs keep the classic single-panel layout. `--filter recursive`
+sweeps all matching runs; `--limit 20` for a quick look.
+
 ## Notes and caveats
 
 - **Stats cache.** Both sweeps read `table_stats_ap.pkl` (existing, computed
