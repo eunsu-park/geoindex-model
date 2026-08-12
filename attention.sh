@@ -80,10 +80,21 @@ done
 #   ap30 GNN node (hp inputs are SW + hp30). Other profiles keep legacy names.
 # =============================================================================
 case "$CONFIG_NAME" in
-    server_ap) EXP_PREFIX="ap_" ;;
-    server_hp) EXP_PREFIX="hp_" ;;
-    *)         EXP_PREFIX="" ;;
+    server_ap)           EXP_PREFIX="ap_" ;;
+    server_ap_recursive) EXP_PREFIX="ap_recursive_" ;;
+    server_hp)           EXP_PREFIX="hp_" ;;
+    *)                   EXP_PREFIX="" ;;
 esac
+
+# Default io grids per profile (mirrors train.sh; explicit --filter overrides):
+# recursive = 6-h output chunk on the {6h,12h,18h,1d} inputs; direct ap =
+# the 2026-08 short-horizon grid. The legacy grid stays for server_hp.
+if [[ "$CONFIG_NAME" == "server_ap_recursive" && -z "$FILTER" ]]; then
+    FILTER="in(6h|12h|18h|1d)_out6h$"
+fi
+if [[ "$CONFIG_NAME" == "server_ap" && -z "$FILTER" ]]; then
+    FILTER="in(6h|12h|18h|1d)_out[1-6]h$"
+fi
 EXTRA_ARGS=()
 if [[ "$CONFIG_NAME" == "server_hp" ]]; then
     EXTRA_ARGS+=("~data.timeseries.gnn_variable_groups.ap30")
