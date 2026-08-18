@@ -7,7 +7,7 @@ Two sweeps on the GPU server, both ap30-side only (no hp30), both with
 | Sweep | Profile | Experiments | Target head | Loss |
 |---|---|---|---|---|
 | A — direct, short-horizon | `server_ap` | in {6h,12h,18h,1d} × out {1h..6h} × 14 models = **336**, names `ap_{io}_{model}` | ap30 (1 ch) | solar_wind_weighted |
-| B — recursive | `server_ap_recursive` | in {6h,12h,18h,1d} × out6h × 14 models = **56**, names `ap_recursive_{io}_{model}` | all 22 input channels | mse |
+| B — recursive | `server_ap_recursive` | in {6h,12h,18h,1d} × out {1h..6h} × 14 models = **336**, names `ap_recursive_{io}_{model}` | all 22 input channels | mse |
 
 Sweep A (revised 2026-08-12) is the short-horizon grid: 20 new io configs
 `in{6h,12h,18h,1d}_out{1..5}h` plus the existing `*_out6h` four. `train.sh`
@@ -16,11 +16,13 @@ legacy long-horizon grid (out12h/18h/24h, in2d/3d) remains available via an
 explicit `--filter`, and stays the scan matrix for `server_hp`.
 
 Sweep B (`configs/server_ap_recursive.yaml`) predicts every input variable
-over a 6-h chunk so the chunk can be fed back for an iterated rollout to
+over a 1–6 h chunk so the chunk can be fed back for an iterated rollout to
 longer leads (E1 deep arm of the preregistration). `train.sh` and
-`run_pending.sh` automatically restrict it to the `*_out6h` io windows and
-prefix its experiment names with `ap_recursive_`, so it never collides with
-the direct `ap_*` results.
+`run_pending.sh` automatically restrict it to the same short-horizon grid
+as sweep A and prefix its experiment names with `ap_recursive_`, so it
+never collides with the direct `ap_*` results. (History: B first ran as
+out6h-only — those 56 runs are a subset of this grid, skipped on relaunch
+by `--skip-existing`; widened to all chunk lengths 2026-08-19.)
 
 ## 0. Before launching sweep A — archive the previous mainline results
 
@@ -53,29 +55,25 @@ cd ~/GitHub/njit-geoindex/geoindex-model   # or the server checkout path
 # Sweep A — 336 direct models
 ./train.sh --config-name server_ap --max-jobs 4
 
-# Sweep B — 56 recursive models
-./train.sh --config-name server_ap_recursive --max-jobs 4
+# Sweep B — 336 recursive models (--skip-existing skips the 56 out6h runs already done)
+./train.sh --config-name server_ap_recursive --max-jobs 4 --skip-existing
 ```
 
 `--max-jobs 4` matches `environment.num_workers: 4` in `server_ap.yaml`
 (4 jobs × 4 loader workers on the single RTX 3090). Sanity-check the queue
-first with `--dry-run` (A prints 336 configs, B prints 56).
+first with `--dry-run` (A and B each print 336 configs).
 
 Restarting an interrupted or re-scoped sweep: add `--skip-existing` — runs
 whose `{save_root}/{exp}/log/training_history.json` exists (written only on
 normal completion) are dropped from the queue; interrupted runs re-train
 from scratch.
 
-Sweep B was scoped down on 2026-08-12 (run in flight): the in2d/in3d input
-lengths were dropped (84 → 56). To apply mid-run: stop the launcher
-(Ctrl-C, or `pkill -f "config-name=server_ap_recursive"`), `git pull`, then
-
-```bash
-./train.sh --config-name server_ap_recursive --max-jobs 4 --skip-existing
-```
-
-Any already-finished `ap_recursive_in2d/in3d_*` results are simply extra
-data — the narrowed filter and run_pending matrix no longer touch them.
+Scope history for sweep B: launched 2026-08-12 as 84 (six input lengths,
+out6h only), narrowed to 56 the same day (in2d/in3d dropped), widened to
+the full 336-combo short-horizon grid on 2026-08-19. Finished runs from
+any earlier scope are skipped by `--skip-existing`; stray
+`ap_recursive_in2d/in3d_*` results are extra data the current filter and
+run_pending matrix no longer touch.
 
 Logs: `~/tmp/train_logs/{experiment}.log`.
 

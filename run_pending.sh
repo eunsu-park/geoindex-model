@@ -107,17 +107,10 @@ IO_CONFIGS=(
     in3d_out6h  in3d_out12h  in3d_out18h  in3d_out24h
 )
 
-# The recursive variant only trains the 6-h output chunk on the
-# {6h,12h,18h,1d} input lengths (see configs/server_ap_recursive.yaml),
-# so scan just those experiments.
-if [[ "$CONFIG_NAME" == "server_ap_recursive" ]]; then
-    IO_CONFIGS=(in6h_out6h in12h_out6h in18h_out6h in1d_out6h)
-fi
-
-# The 2026-08 direct ap sweep uses the short-horizon grid:
+# Both 2026-08 ap sweeps (direct and recursive) use the short-horizon grid:
 # input {6h,12h,18h,1d} x output {1h..6h}. The legacy grid above stays for
 # server_hp (hp results exist on it) and the local/dev profiles.
-if [[ "$CONFIG_NAME" == "server_ap" ]]; then
+if [[ "$CONFIG_NAME" == "server_ap" || "$CONFIG_NAME" == "server_ap_recursive" ]]; then
     IO_CONFIGS=()
     for _in in in6h in12h in18h in1d; do
         for _out in out1h out2h out3h out4h out5h out6h; do

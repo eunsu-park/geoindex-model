@@ -90,7 +90,7 @@ esac
 # recursive = 6-h output chunk on the {6h,12h,18h,1d} inputs; direct ap =
 # the 2026-08 short-horizon grid. The legacy grid stays for server_hp.
 if [[ "$CONFIG_NAME" == "server_ap_recursive" && -z "$FILTER" ]]; then
-    FILTER="in(6h|12h|18h|1d)_out6h$"
+    FILTER="in(6h|12h|18h|1d)_out[1-6]h$"
 fi
 if [[ "$CONFIG_NAME" == "server_ap" && -z "$FILTER" ]]; then
     FILTER="in(6h|12h|18h|1d)_out[1-6]h$"
