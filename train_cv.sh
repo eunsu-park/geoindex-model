@@ -34,6 +34,7 @@ FOLD_FILTER=""
 IO="in12h_out12h"
 DRY_RUN=false
 CONFIG_NAME="local"
+SKIP_EXISTING=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -42,10 +43,11 @@ while [[ $# -gt 0 ]]; do
         --fold)       FOLD_FILTER="$2"; shift 2 ;;
         --io)         IO="$2"; shift 2 ;;
         --dry-run)    DRY_RUN=true; shift ;;
+        --skip-existing) SKIP_EXISTING=true; shift ;;
         --config-name) CONFIG_NAME="$2"; shift 2 ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: ./train_cv.sh [--model MODEL] [--fold N] [--io IO] [--max-jobs N] [--dry-run] [--config-name NAME]"
+            echo "Usage: ./train_cv.sh [--model MODEL] [--fold N] [--io IO] [--max-jobs N] [--dry-run] [--config-name NAME] [--skip-existing]"
             exit 1
             ;;
     esac
@@ -55,8 +57,8 @@ done
 # Experiment-name prefix + hp GNN-node fix (server profiles)
 #   server_ap -> "ap_" prefix ; server_hp -> "hp_" prefix + drop the inherited
 #   ap30 GNN node (hp inputs are SW + hp30). Other profiles keep legacy names.
-#   NOTE: CV also needs configs/cv/fold*.yaml + fold index files regenerated for
-#   the new 1995-2025 data before use (see report).
+#   Fold indices + per-fold stats live under {data_root}/${cv_dir}/fold*/
+#   (cv5_ap for server_ap; regenerated 2026-07 for the 1995-2025 table).
 # =============================================================================
 case "$CONFIG_NAME" in
     server_ap|mac_ap) EXP_PREFIX="ap_" ;;
@@ -91,11 +93,46 @@ for f in configs/cv/fold*.yaml; do
 done
 FOLDS=($(printf '%s\n' "${FOLDS[@]}" | sort))
 
+# Completed-run detection (--skip-existing), same marker as train.sh:
+# {save_root}/{exp}/log/training_history.json is written only after fit()
+# returns normally, so interrupted runs are re-queued. save_root resolves
+# through the config defaults chain, or the SAVE_ROOT env var.
+SKIPPED=0
+if $SKIP_EXISTING; then
+    if [[ -z "${SAVE_ROOT:-}" ]]; then
+        cfg="$CONFIG_NAME"
+        for _ in 1 2 3 4 5; do
+            cfg_path="configs/${cfg}.yaml"
+            [[ -f "$cfg_path" ]] || break
+            SAVE_ROOT=$(grep -E "^[[:space:]]*save_root:" "$cfg_path" | head -1 \
+                | sed -E 's/.*save_root:[[:space:]]*"?([^"]*)"?.*/\1/')
+            [[ -n "$SAVE_ROOT" ]] && break
+            cfg=$(awk '/^defaults:/{f=1;next}
+                       f && /^[^ -]/{exit}
+                       f && /^[[:space:]]*-[[:space:]]*[a-zA-Z]/{
+                           sub(/^[[:space:]]*-[[:space:]]*/,"");
+                           if ($1 != "override" && $1 != "_self_") {print $1; exit}
+                       }' "$cfg_path")
+            [[ -z "$cfg" ]] && break
+        done
+    fi
+    if [[ -z "${SAVE_ROOT:-}" || ! -d "$SAVE_ROOT" ]]; then
+        echo "ERROR: --skip-existing needs a valid save_root for '$CONFIG_NAME'" \
+             "(resolved: '${SAVE_ROOT:-<none>}', not a directory)."
+        echo "       Set the SAVE_ROOT env var explicitly."
+        exit 1
+    fi
+fi
+
 CONFIGS=()
 DISPLAY_NAMES=()
 for mdl in "${MODEL_CONFIGS[@]}"; do
     for fold in "${FOLDS[@]}"; do
         exp_name="${EXP_PREFIX}${IO}_${mdl}_${fold}"
+        if $SKIP_EXISTING && [[ -f "$SAVE_ROOT/${exp_name}/log/training_history.json" ]]; then
+            SKIPPED=$((SKIPPED + 1))
+            continue
+        fi
         CONFIGS+=("+io=${IO} +model=${mdl} +cv=${fold} experiment.name=${exp_name}")
         DISPLAY_NAMES+=("${exp_name}")
     done
@@ -103,6 +140,10 @@ done
 
 TOTAL=${#CONFIGS[@]}
 if [[ $TOTAL -eq 0 ]]; then
+    if [[ $SKIPPED -gt 0 ]]; then
+        echo "All $SKIPPED matching runs are already completed. Nothing to do."
+        exit 0
+    fi
     echo "No configs matched (model='$MODEL_FILTER', fold='$FOLD_FILTER')"
     exit 1
 fi
@@ -116,6 +157,9 @@ echo "I/O config:    $IO"
 echo "Model filter:  ${MODEL_FILTER:-all}"
 echo "Fold filter:   ${FOLD_FILTER:-all}"
 echo "Config name:   $CONFIG_NAME"
+if $SKIP_EXISTING; then
+    echo "Skipped done:  $SKIPPED (save_root: $SAVE_ROOT)"
+fi
 echo "========================================"
 echo ""
 
