@@ -3,8 +3,9 @@
 # Same input as server_ap (21 solar-wind columns + ap30), but the model
 # predicts ALL 22 input channels over the target window instead of ap30
 # alone, so the output chunk can be fed back as input for an iterated
-# (recursive) rollout. Trained only on the *_out6h io windows (6-h chunk);
-# longer leads are reached at evaluation time by rolling the chunk forward.
+# (recursive) rollout. Trained on the short-horizon grid (chunk lengths
+# 1-6 h on the {6h,12h,18h,1d} inputs); longer leads are reached at
+# evaluation time by rolling the chunk forward.
 #
 # Differences from server_ap:
 #   - target_variables = input_variables (22 channels, same order — the
@@ -22,7 +23,7 @@
 #
 # Launch (GPU server):
 #   ./train.sh --config-name server_ap_recursive
-#   (the out6h io filter is applied automatically by train.sh)
+#   (the short-horizon io filter is applied automatically by train.sh)
 
 defaults:
   - server_ap

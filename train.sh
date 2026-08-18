@@ -91,10 +91,10 @@ case "$CONFIG_NAME" in
 esac
 
 # The recursive variant is trained on the 6-h output chunk only (longer
-# leads come from rollout at evaluation time) and, per the 2026-08 run
-# scope, only on the {6h,12h,18h,1d} input lengths.
+# leads come from rollout at evaluation time; chunk length 1-6 h) and, per
+# the 2026-08 run scope, only on the {6h,12h,18h,1d} input lengths.
 if [[ "$CONFIG_NAME" == "server_ap_recursive" && -z "$FILTER" ]]; then
-    FILTER="in(6h|12h|18h|1d)_out6h$"
+    FILTER="in(6h|12h|18h|1d)_out[1-6]h$"
 fi
 
 # The 2026-08 direct ap sweep is the short-horizon grid: input {6h,12h,18h,1d}
