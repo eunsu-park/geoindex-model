@@ -59,19 +59,33 @@ done
 # =============================================================================
 # Resolve save_root
 # =============================================================================
-CONFIG_FILE_PATH="configs/${CONFIG_NAME}.yaml"
+# Profiles like server_ap_storm / server_ap_recursive / server_hp inherit
+# save_root from a parent config, so walk the defaults chain (same logic
+# as train.sh --skip-existing) instead of grepping one file.
 if [[ -z "${SAVE_ROOT:-}" ]]; then
-    if [[ ! -f "$CONFIG_FILE_PATH" ]]; then
-        echo "ERROR: Config file not found: $CONFIG_FILE_PATH"
+    if [[ ! -f "configs/${CONFIG_NAME}.yaml" ]]; then
+        echo "ERROR: Config file not found: configs/${CONFIG_NAME}.yaml"
         exit 1
     fi
-    SAVE_ROOT=$(grep -E "^\s*save_root:" "$CONFIG_FILE_PATH" \
-        | head -1 \
-        | sed -E 's/.*save_root:[[:space:]]*"?([^"]*)"?.*/\1/')
+    cfg="$CONFIG_NAME"
+    for _ in 1 2 3 4 5; do
+        cfg_path="configs/${cfg}.yaml"
+        [[ -f "$cfg_path" ]] || break
+        SAVE_ROOT=$(grep -E "^[[:space:]]*save_root:" "$cfg_path" | head -1 \
+            | sed -E 's/.*save_root:[[:space:]]*"?([^"]*)"?.*/\1/')
+        [[ -n "$SAVE_ROOT" ]] && break
+        cfg=$(awk '/^defaults:/{f=1;next}
+                   f && /^[^ -]/{exit}
+                   f && /^[[:space:]]*-[[:space:]]*[a-zA-Z]/{
+                       sub(/^[[:space:]]*-[[:space:]]*/,"");
+                       if ($1 != "override" && $1 != "_self_") {print $1; exit}
+                   }' "$cfg_path")
+        [[ -z "$cfg" ]] && break
+    done
 fi
 if [[ -z "$SAVE_ROOT" || ! -d "$SAVE_ROOT" ]]; then
     echo "ERROR: SAVE_ROOT not found or invalid: '$SAVE_ROOT'"
-    echo "Set SAVE_ROOT env var or fix $CONFIG_FILE_PATH."
+    echo "Set SAVE_ROOT env var or fix the config chain for '$CONFIG_NAME'."
     exit 1
 fi
 
@@ -80,9 +94,9 @@ fi
 #   server_ap -> "ap_" prefix ; server_hp -> "hp_" prefix + drop the inherited
 #   ap30 GNN node. The prefix also scopes the save_root scan below so ap and hp
 #   results (ap_*/hp_*) are detected independently. Other profiles: no prefix.
-#   NOTE: server_hp inherits save_root from server_ap, so it is not literally in
-#   configs/server_hp.yaml — run this as `SAVE_ROOT=... ./run_pending.sh
-#   --config-name server_hp`.
+#   save_root is resolved through the config defaults chain, so profiles
+#   that inherit it (server_hp, server_ap_storm, server_ap_recursive) work
+#   without the SAVE_ROOT env var; the env var still overrides if set.
 # =============================================================================
 case "$CONFIG_NAME" in
     server_ap)           EXP_PREFIX="ap_" ;;
