@@ -100,6 +100,34 @@ class TableBaseDataset(Dataset):
             method_config=norm_config
         )
 
+        # Optional training-anchor filter (e.g. storm-only training): keep
+        # only anchors whose TARGET window contains at least one point of
+        # `variable` at or above `peak_min`, in raw table units. Applied
+        # after the statistics block, so normalization stats keep
+        # describing the full training split; validation/test anchors are
+        # never filtered, so metrics stay comparable across sweeps.
+        tf_cfg = getattr(ts_cfg, 'train_filter', None)
+        peak_min = getattr(tf_cfg, 'peak_min', None) if tf_cfg is not None else None
+        if peak_min is not None:
+            filter_var_idx = self.all_variables.index(tf_cfg.variable)
+            n_before = len(self.train_index)
+            kept = []
+            for dt, label in self.train_index:
+                row = self.dt_to_row[dt]
+                window = self.array[row + self.target_start:
+                                    row + self.target_end, filter_var_idx]
+                # NaN compares False, so gap-only windows are dropped too.
+                if (window >= float(peak_min)).any():
+                    kept.append((dt, label))
+            if not kept:
+                raise ValueError(
+                    f"train_filter ({tf_cfg.variable} >= {peak_min}) removed "
+                    f"all {n_before} training anchors")
+            self.train_index = kept
+            logger.info(
+                f"Train filter: {tf_cfg.variable} target-window peak >= "
+                f"{peak_min} kept {len(kept)}/{n_before} anchors")
+
         # Pre-compute variable index lookups
         self._input_var_idx = [
             self.all_variables.index(v) for v in self.input_variables

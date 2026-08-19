@@ -86,6 +86,7 @@ fi
 # =============================================================================
 case "$CONFIG_NAME" in
     server_ap)           EXP_PREFIX="ap_" ;;
+    server_ap_storm)     EXP_PREFIX="ap_storm_" ;;
     server_ap_recursive) EXP_PREFIX="ap_recursive_" ;;
     server_hp)           EXP_PREFIX="hp_" ;;
     *)                   EXP_PREFIX="" ;;
@@ -110,7 +111,7 @@ IO_CONFIGS=(
 # Both 2026-08 ap sweeps (direct and recursive) use the short-horizon grid:
 # input {6h,12h,18h,1d} x output {1h..6h}. The legacy grid above stays for
 # server_hp (hp results exist on it) and the local/dev profiles.
-if [[ "$CONFIG_NAME" == "server_ap" || "$CONFIG_NAME" == "server_ap_recursive" ]]; then
+if [[ "$CONFIG_NAME" == "server_ap" || "$CONFIG_NAME" == "server_ap_storm" || "$CONFIG_NAME" == "server_ap_recursive" ]]; then
     IO_CONFIGS=()
     for _in in in6h in12h in18h in1d; do
         for _out in out1h out2h out3h out4h out5h out6h; do
