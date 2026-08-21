@@ -167,6 +167,7 @@ models_for_phase() {
 # Detect pending tasks
 # =============================================================================
 TASKS=()
+NOT_TRAINED=()
 
 for phase in "${PHASE_LIST[@]}"; do
     marker=$(marker_for_phase "$phase")
@@ -174,6 +175,14 @@ for phase in "${PHASE_LIST[@]}"; do
     for io in "${IO_CONFIGS[@]}"; do
         for m in "${models[@]}"; do
             if [[ ! -f "$SAVE_ROOT/${EXP_PREFIX}${io}_${m}/${marker}" ]]; then
+                # Guard: never analyze a checkpoint whose training did not
+                # finish (log/training_history.json is written only on normal
+                # completion). Interrupted trainings otherwise get silently
+                # validated on a partial best-checkpoint.
+                if [[ ! -f "$SAVE_ROOT/${EXP_PREFIX}${io}_${m}/log/training_history.json" ]]; then
+                    NOT_TRAINED+=("${phase}:${EXP_PREFIX}${io}_${m}")
+                    continue
+                fi
                 TASKS+=("${phase}:${io}:${m}")
             fi
         done
@@ -181,6 +190,15 @@ for phase in "${PHASE_LIST[@]}"; do
 done
 
 TOTAL=${#TASKS[@]}
+
+if [[ ${#NOT_TRAINED[@]} -gt 0 ]]; then
+    echo "WARNING: skipping ${#NOT_TRAINED[@]} pending task(s) whose training is"
+    echo "         incomplete (no log/training_history.json) — train them first:"
+    for t in "${NOT_TRAINED[@]}"; do
+        echo "  $t"
+    done
+    echo ""
+fi
 
 echo "========================================"
 echo "Pending Analysis Runner"
