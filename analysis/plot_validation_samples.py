@@ -41,6 +41,7 @@ import argparse
 import io
 import os
 import re
+import shutil
 import sys
 import zipfile
 from multiprocessing import Pool
@@ -205,6 +206,10 @@ def main():
     parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--overwrite", action="store_true",
                         help="Re-render PNGs that already exist.")
+    parser.add_argument("--min-free-gb", type=float, default=40.0,
+                        help="Stop (resumably) before starting a run when the "
+                             "output filesystem has less free space than this. "
+                             "0 disables the guard.")
     args = parser.parse_args()
 
     if args.experiment:
@@ -232,6 +237,17 @@ def main():
 
     ok = True
     for i, exp in enumerate(experiments, 1):
+        if args.min_free_gb > 0:
+            probe = out_dir_for(exp) or args.results_dir
+            while not os.path.isdir(probe):
+                probe = os.path.dirname(probe) or "/"
+            free_gb = shutil.disk_usage(probe).free / 1e9
+            if free_gb < args.min_free_gb:
+                print(f"STOP: only {free_gb:.1f} GB free (< {args.min_free_gb} GB) "
+                      f"before run {i}/{len(experiments)}. Free up space and "
+                      f"re-run the same command — finished PNGs are skipped.",
+                      flush=True)
+                sys.exit(3)
         if len(experiments) > 1:
             print(f"[{i}/{len(experiments)}]", end=" ")
         ok = plot_run(args.results_dir, exp, epoch=args.epoch,

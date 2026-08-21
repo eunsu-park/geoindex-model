@@ -80,14 +80,14 @@ done
 #   ap30 GNN node (hp inputs are SW + hp30). Other profiles keep legacy names.
 # =============================================================================
 case "$CONFIG_NAME" in
-    server_ap)           EXP_PREFIX="ap_" ;;
+    server_ap|mac_ap)    EXP_PREFIX="ap_" ;;
     server_ap_storm)     EXP_PREFIX="ap_storm_" ;;
     server_ap_recursive) EXP_PREFIX="ap_recursive_" ;;
-    server_hp)           EXP_PREFIX="hp_" ;;
+    server_hp|mac_hp)    EXP_PREFIX="hp_" ;;
     *)                   EXP_PREFIX="" ;;
 esac
 EXTRA_ARGS=()
-if [[ "$CONFIG_NAME" == "server_hp" ]]; then
+if [[ "$CONFIG_NAME" == "server_hp" || "$CONFIG_NAME" == "mac_hp" ]]; then
     EXTRA_ARGS+=("~data.timeseries.gnn_variable_groups.ap30")
 fi
 
@@ -97,7 +97,7 @@ fi
 if [[ "$CONFIG_NAME" == "server_ap_recursive" && -z "$FILTER" ]]; then
     FILTER="in(6h|12h|18h|1d)_out[1-6]h$"
 fi
-if [[ ("$CONFIG_NAME" == "server_ap" || "$CONFIG_NAME" == "server_ap_storm") && -z "$FILTER" ]]; then
+if [[ ("$CONFIG_NAME" == "server_ap" || "$CONFIG_NAME" == "mac_ap" || "$CONFIG_NAME" == "server_ap_storm") && -z "$FILTER" ]]; then
     FILTER="in(6h|12h|18h|1d)_out[1-6]h$"
 fi
 
