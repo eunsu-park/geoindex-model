@@ -84,10 +84,10 @@ done
 # Other profiles (local/dev/...) keep the legacy un-prefixed names.
 # =============================================================================
 case "$CONFIG_NAME" in
-    server_ap)           EXP_PREFIX="ap_" ;;
+    server_ap|mac_ap)    EXP_PREFIX="ap_" ;;
     server_ap_storm)     EXP_PREFIX="ap_storm_" ;;
     server_ap_recursive) EXP_PREFIX="ap_recursive_" ;;
-    server_hp)           EXP_PREFIX="hp_" ;;
+    server_hp|mac_hp)    EXP_PREFIX="hp_" ;;
     *)                   EXP_PREFIX="" ;;
 esac
 
@@ -101,7 +101,7 @@ fi
 # The 2026-08 direct ap sweep is the short-horizon grid: input {6h,12h,18h,1d}
 # x output {1h..6h} (24 io x 14 models = 336). Pass an explicit --filter to
 # override (e.g. for the legacy long-horizon grid).
-if [[ ("$CONFIG_NAME" == "server_ap" || "$CONFIG_NAME" == "server_ap_storm") && -z "$FILTER" ]]; then
+if [[ ("$CONFIG_NAME" == "server_ap" || "$CONFIG_NAME" == "mac_ap" || "$CONFIG_NAME" == "server_ap_storm") && -z "$FILTER" ]]; then
     FILTER="in(6h|12h|18h|1d)_out[1-6]h$"
 fi
 
@@ -142,7 +142,7 @@ fi
 # hp uses SW + hp30 inputs, so the inherited ap30 GNN node must be dropped
 # (Hydra deep-merges dicts, so it cannot be removed from within server_hp.yaml).
 EXTRA_ARGS=()
-if [[ "$CONFIG_NAME" == "server_hp" ]]; then
+if [[ "$CONFIG_NAME" == "server_hp" || "$CONFIG_NAME" == "mac_hp" ]]; then
     EXTRA_ARGS+=("~data.timeseries.gnn_variable_groups.ap30")
 fi
 
