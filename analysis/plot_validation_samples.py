@@ -228,6 +228,23 @@ def plot_run(results_dir: str, experiment: str, epoch: str = "best",
     if not os.path.exists(zip_path):
         print(f"SKIP {experiment}: no archive at {zip_path}")
         return False
+    # Done runs short-circuit before any npz read (a cloud-only archive
+    # would block on hydration).
+    if zip_mode and not overwrite and os.path.exists(
+            os.path.join(val_dir, "plots.zip")):
+        stale = os.path.join(val_dir, "plots")
+        if os.path.isdir(stale):
+            shutil.rmtree(stale)
+            print(f"{experiment}: plots.zip present, removed stale loose dir",
+                  flush=True)
+        return True
+    # A cloud-only archive would block on hydration for the entire read;
+    # defer until the sync client has it local (re-run later). Checked
+    # before ZipFile() below, which already reads the central directory.
+    if os.stat(zip_path).st_blocks == 0:
+        print(f"{experiment}: DEFER — npz.zip is cloud-only "
+              f"(sync-client backlog)", flush=True)
+        return False
 
     with zipfile.ZipFile(zip_path) as z:
         members = sorted(n for n in z.namelist() if n.endswith(".npz"))
@@ -238,29 +255,40 @@ def plot_run(results_dir: str, experiment: str, epoch: str = "best",
     loose_dir = os.path.join(val_dir, "plots")
     if zip_mode:
         plots_zip = os.path.join(val_dir, "plots.zip")
-        if os.path.exists(plots_zip) and not overwrite:
-            # Done earlier; clear any leftover loose dir it superseded.
-            if os.path.isdir(loose_dir):
-                shutil.rmtree(loose_dir)
-                print(f"{experiment}: plots.zip present, removed stale loose dir",
-                      flush=True)
-            return True
         if limit > 0:
             print(f"{experiment}: --limit is ignored in zip mode "
                   f"(a partial plots.zip would read as complete)", flush=True)
 
         # Fast path: a COMPLETE loose dir is zipped in place — no scratch
-        # copy, no render, half the transient disk (reading a cloud-only
-        # placeholder still hydrates it for the duration of the zip).
+        # copy, no render. Reading a cloud-only placeholder blocks until the
+        # sync client hydrates it, which can stall for hours while the
+        # client digests a large backlog — so runs with ANY cloud-only
+        # source file are DEFERRED (re-run the same command once the sync
+        # client has caught up).
         expected = {os.path.splitext(os.path.basename(m))[0] + ".png"
                     for m in members}
         loose_have = ({f for f in os.listdir(loose_dir) if f.endswith(".png")}
                       if os.path.isdir(loose_dir) else set())
         if expected <= loose_have:
+            dataless = sum(
+                1 for f in expected
+                if os.stat(os.path.join(loose_dir, f)).st_blocks == 0)
+            if dataless:
+                print(f"{experiment}: DEFER — {dataless} of {len(expected)} "
+                      f"loose PNGs are cloud-only (hydration would stall)",
+                      flush=True)
+                return False
             print(f"{experiment}: complete loose dir, zipping in place "
                   f"({len(expected)} PNGs)", flush=True)
             return _write_plots_zip(plots_zip, loose_dir, expected,
                                     experiment, loose_dir=loose_dir)
+        # Seeding needs any partial loose PNGs local as well.
+        dataless = sum(1 for f in loose_have
+                       if os.stat(os.path.join(loose_dir, f)).st_blocks == 0)
+        if dataless:
+            print(f"{experiment}: DEFER — {dataless} partial loose PNGs are "
+                  f"cloud-only", flush=True)
+            return False
 
         out_dir = os.path.join(scratch_root, experiment)
         os.makedirs(out_dir, exist_ok=True)
