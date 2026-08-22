@@ -105,22 +105,25 @@ are local there — on a cloud-synced replica every npz.zip must download
 first) and point `--output-root` OUTSIDE the synced tree:
 
 ```bash
-# whole direct sweep, resumable (existing PNGs are skipped)
+# whole sweep as one plots.zip per run (policy since 2026-08-22):
+# renders via a LOCAL scratch dir, absorbs + deletes any loose plots/ dir,
+# and skips runs whose plots.zip already exists
 nohup python analysis/plot_validation_samples.py \
     --results-dir /home/eunsupark/Projects/GeoIndex/results \
-    --filter '^ap_in(6h|12h|18h|1d)_out[1-6]h_' \
-    --output-root /home/eunsupark/plots_sweepA_2026-08 \
-    --workers 12 > ~/tmp/plot_sweepA.log 2>&1 &
+    --filter '^ap_(storm_)?in(6h|12h|18h|1d)_out[1-6]h_' \
+    --zip --workers 12 --min-free-gb 25 > ~/tmp/plot_sweep.log 2>&1 &
 
-# single run / quick look
+# single run / quick look (loose PNGs, no zip)
 python analysis/plot_validation_samples.py \
     --results-dir /home/eunsupark/Projects/GeoIndex/results \
     --experiment ap_in12h_out6h_linear --output-root /tmp/plots --limit 20
 ```
 
-`--filter` is a regex on run names. Recursive runs render the grouped
-envelope-band layout automatically; direct runs keep the classic
-single-panel layout.
+`--filter` is a regex on run names (the pattern above also catches the CV
+fold runs — intended). One loose PNG per anchor scales terribly through a
+sync client (millions of small files stall upload/eviction); plots.zip is
+one ~1.2 GB file per run. Recursive runs render the grouped envelope-band
+layout automatically; direct runs keep the classic single-panel layout.
 
 ## Notes and caveats
 
