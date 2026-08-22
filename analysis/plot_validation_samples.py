@@ -133,41 +133,78 @@ def plot_member(args_tuple) -> tuple[str, str | None]:
 
 def plot_run(results_dir: str, experiment: str, epoch: str = "best",
              output_dir: str | None = None, limit: int = 0,
-             workers: int = 1, overwrite: bool = False) -> bool:
+             workers: int = 1, overwrite: bool = False,
+             zip_mode: bool = False, scratch_root: str | None = None) -> bool:
     """Render plots for every validation anchor of one run.
+
+    In zip mode the run's deliverable is a single
+    ``validation/<epoch>/plots.zip``: PNGs are rendered into a local scratch
+    directory (seeded from any pre-existing loose ``plots/`` directory, which
+    hydrates cloud-only files), zipped (stored, PNGs are already compressed),
+    and the loose directory is deleted only after the zip verifies complete.
+    An existing plots.zip marks the run done.
 
     Args:
         results_dir: Root results directory.
         experiment: Experiment (run) name.
         epoch: Checkpoint epoch subdir (default 'best').
-        output_dir: Where to write PNGs (default
+        output_dir: Where to write PNGs (loose mode only; default
             ``<experiment>/validation/<epoch>/plots``).
-        limit: Render only the first N anchors (0 = all).
+        limit: Render only the first N anchors (0 = all; ignored in zip mode).
         workers: Parallel rendering processes.
-        overwrite: Re-render PNGs that already exist.
+        overwrite: Re-render PNGs (loose) / rebuild plots.zip (zip mode).
+        zip_mode: Produce plots.zip instead of loose PNGs.
+        scratch_root: Local scratch root for zip mode (must be OUTSIDE any
+            cloud-synced tree).
 
     Returns:
-        True if the archive existed and every rendered plot succeeded.
+        True if the archive existed and the run's plots completed.
     """
-    zip_path = os.path.join(results_dir, experiment, "validation", epoch, "npz.zip")
+    val_dir = os.path.join(results_dir, experiment, "validation", epoch)
+    zip_path = os.path.join(val_dir, "npz.zip")
     if not os.path.exists(zip_path):
         print(f"SKIP {experiment}: no archive at {zip_path}")
         return False
 
     with zipfile.ZipFile(zip_path) as z:
         members = sorted(n for n in z.namelist() if n.endswith(".npz"))
-    if limit > 0:
-        members = members[:limit]
     if not members:
         print(f"SKIP {experiment}: archive holds no .npz members")
         return False
 
-    out_dir = output_dir or os.path.join(
-        results_dir, experiment, "validation", epoch, "plots")
-    os.makedirs(out_dir, exist_ok=True)
+    loose_dir = os.path.join(val_dir, "plots")
+    if zip_mode:
+        plots_zip = os.path.join(val_dir, "plots.zip")
+        if os.path.exists(plots_zip) and not overwrite:
+            # Done earlier; clear any leftover loose dir it superseded.
+            if os.path.isdir(loose_dir):
+                shutil.rmtree(loose_dir)
+                print(f"{experiment}: plots.zip present, removed stale loose dir",
+                      flush=True)
+            return True
+        if limit > 0:
+            print(f"{experiment}: --limit is ignored in zip mode "
+                  f"(a partial plots.zip would read as complete)", flush=True)
+        out_dir = os.path.join(scratch_root, experiment)
+        os.makedirs(out_dir, exist_ok=True)
+        # Seed scratch from a pre-existing loose render (reading a
+        # cloud-only placeholder hydrates it).
+        if os.path.isdir(loose_dir):
+            seeded = 0
+            for f in os.listdir(loose_dir):
+                if f.endswith(".png") and not os.path.exists(os.path.join(out_dir, f)):
+                    shutil.copy2(os.path.join(loose_dir, f), os.path.join(out_dir, f))
+                    seeded += 1
+            if seeded:
+                print(f"{experiment}: seeded {seeded} PNGs from loose dir", flush=True)
+    else:
+        if limit > 0:
+            members = members[:limit]
+        out_dir = output_dir or loose_dir
+        os.makedirs(out_dir, exist_ok=True)
 
     print(f"{experiment}: rendering {len(members)} plots -> {out_dir}", flush=True)
-    tasks = [(m, out_dir, experiment, overwrite) for m in members]
+    tasks = [(m, out_dir, experiment, overwrite and not zip_mode) for m in members]
     if workers > 1:
         with Pool(processes=workers, initializer=_init_worker,
                   initargs=(zip_path,)) as pool:
@@ -181,7 +218,41 @@ def plot_run(results_dir: str, experiment: str, epoch: str = "best",
     failed = sum(1 for s, _ in outcomes if s == "failed")
     print(f"{experiment}: {done} written, {skipped} skipped (existing), "
           f"{failed} failed", flush=True)
-    return failed == 0
+
+    if not zip_mode:
+        return failed == 0
+
+    if failed > 0:
+        print(f"{experiment}: keeping scratch for resume ({out_dir})", flush=True)
+        return False
+
+    # Zip the scratch (atomic: write .tmp, verify, then replace), then drop
+    # the loose dir and scratch.
+    expected = {os.path.splitext(os.path.basename(m))[0] + ".png" for m in members}
+    have = {f for f in os.listdir(out_dir) if f.endswith(".png")}
+    missing = expected - have
+    if missing:
+        print(f"{experiment}: {len(missing)} PNGs missing after render "
+              f"(e.g. {sorted(missing)[:3]}); keeping scratch, no zip", flush=True)
+        return False
+    tmp_zip = plots_zip + ".tmp"
+    with zipfile.ZipFile(tmp_zip, "w", compression=zipfile.ZIP_STORED) as zf:
+        for f in sorted(expected):
+            zf.write(os.path.join(out_dir, f), arcname=f)
+    with zipfile.ZipFile(tmp_zip) as zf:
+        n_zipped = sum(1 for n in zf.namelist() if n.endswith(".png"))
+    if n_zipped != len(expected):
+        print(f"{experiment}: zip verification failed ({n_zipped} != "
+              f"{len(expected)}); keeping scratch", flush=True)
+        os.remove(tmp_zip)
+        return False
+    os.replace(tmp_zip, plots_zip)
+    if os.path.isdir(loose_dir):
+        shutil.rmtree(loose_dir)
+    shutil.rmtree(out_dir)
+    print(f"{experiment}: plots.zip written ({n_zipped} PNGs), loose dir removed",
+          flush=True)
+    return True
 
 
 def main():
@@ -210,7 +281,23 @@ def main():
                         help="Stop (resumably) before starting a run when the "
                              "output filesystem has less free space than this. "
                              "0 disables the guard.")
+    parser.add_argument("--zip", action="store_true", dest="zip_mode",
+                        help="Produce one validation/<epoch>/plots.zip per run "
+                             "(rendered via a local scratch dir; any loose "
+                             "plots/ dir is absorbed and deleted).")
+    parser.add_argument("--scratch-dir", default="",
+                        help="Scratch root for --zip (default: system temp). "
+                             "Must be OUTSIDE any cloud-synced tree.")
     args = parser.parse_args()
+
+    scratch_root = None
+    if args.zip_mode:
+        import tempfile
+        scratch_root = args.scratch_dir or os.path.join(
+            tempfile.gettempdir(), "plot_zip_scratch")
+        if "CloudStorage" in os.path.abspath(scratch_root):
+            sys.exit("--scratch-dir must not be inside a cloud-synced tree")
+        os.makedirs(scratch_root, exist_ok=True)
 
     if args.experiment:
         experiments = [args.experiment]
@@ -251,9 +338,10 @@ def main():
         if len(experiments) > 1:
             print(f"[{i}/{len(experiments)}]", end=" ")
         ok = plot_run(args.results_dir, exp, epoch=args.epoch,
-                      output_dir=out_dir_for(exp),
+                      output_dir=None if args.zip_mode else out_dir_for(exp),
                       limit=args.limit, workers=args.workers,
-                      overwrite=args.overwrite) and ok
+                      overwrite=args.overwrite,
+                      zip_mode=args.zip_mode, scratch_root=scratch_root) and ok
     sys.exit(0 if ok else 1)
 
 
