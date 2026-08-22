@@ -95,6 +95,29 @@ def _init_worker(zip_path: str):
     _NORM = IdentityNormalizer()
 
 
+def _local_score(results_dir: str, exp: str, epoch: str) -> float:
+    """Fraction of a run's loose PNGs that are locally hydrated (sampled).
+
+    Cloud-only placeholders report st_blocks == 0. Used to order zip-mode
+    sweeps so net-zero-disk conversions (delete ~ as much as the zip adds)
+    run before conversions that must download their sources.
+    """
+    pd = os.path.join(results_dir, exp, "validation", epoch, "plots")
+    if not os.path.isdir(pd):
+        return 0.0
+    files = [f for f in os.listdir(pd) if f.endswith(".png")]
+    if not files:
+        return 0.0
+    sample = files[::max(1, len(files) // 20)][:20]
+    local = 0
+    for f in sample:
+        try:
+            local += os.stat(os.path.join(pd, f)).st_blocks > 0
+        except OSError:
+            pass
+    return local / len(sample)
+
+
 def plot_member(args_tuple) -> tuple[str, str | None]:
     """Render one npz member to a PNG.
 
@@ -129,6 +152,46 @@ def plot_member(args_tuple) -> tuple[str, str | None]:
     except Exception as e:  # keep the sweep going; report at the end
         print(f"  FAIL {stem}: {e!r}")
         return ("failed", stem)
+
+
+def _write_plots_zip(plots_zip: str, src_dir: str, expected: set,
+                     experiment: str, loose_dir: str | None = None,
+                     scratch_dir: str | None = None) -> bool:
+    """Write plots.zip atomically from ``src_dir`` and clean up sources.
+
+    Writes ``plots.zip.tmp``, verifies the member count against ``expected``,
+    then renames into place; only after that are the loose dir and scratch
+    dir removed.
+
+    Args:
+        plots_zip: Final zip path.
+        src_dir: Directory holding the PNGs to zip.
+        expected: Exact set of PNG basenames the zip must contain.
+        experiment: Run name (log prefix).
+        loose_dir: Loose plots dir to delete on success (if it exists).
+        scratch_dir: Scratch dir to delete on success (if distinct).
+
+    Returns:
+        True on verified success.
+    """
+    tmp_zip = plots_zip + ".tmp"
+    with zipfile.ZipFile(tmp_zip, "w", compression=zipfile.ZIP_STORED) as zf:
+        for f in sorted(expected):
+            zf.write(os.path.join(src_dir, f), arcname=f)
+    with zipfile.ZipFile(tmp_zip) as zf:
+        n_zipped = sum(1 for n in zf.namelist() if n.endswith(".png"))
+    if n_zipped != len(expected):
+        print(f"{experiment}: zip verification failed ({n_zipped} != "
+              f"{len(expected)}); sources kept", flush=True)
+        os.remove(tmp_zip)
+        return False
+    os.replace(tmp_zip, plots_zip)
+    for d in (loose_dir, scratch_dir):
+        if d and os.path.isdir(d):
+            shutil.rmtree(d)
+    print(f"{experiment}: plots.zip written ({n_zipped} PNGs), sources removed",
+          flush=True)
+    return True
 
 
 def plot_run(results_dir: str, experiment: str, epoch: str = "best",
@@ -185,18 +248,30 @@ def plot_run(results_dir: str, experiment: str, epoch: str = "best",
         if limit > 0:
             print(f"{experiment}: --limit is ignored in zip mode "
                   f"(a partial plots.zip would read as complete)", flush=True)
+
+        # Fast path: a COMPLETE loose dir is zipped in place — no scratch
+        # copy, no render, half the transient disk (reading a cloud-only
+        # placeholder still hydrates it for the duration of the zip).
+        expected = {os.path.splitext(os.path.basename(m))[0] + ".png"
+                    for m in members}
+        loose_have = ({f for f in os.listdir(loose_dir) if f.endswith(".png")}
+                      if os.path.isdir(loose_dir) else set())
+        if expected <= loose_have:
+            print(f"{experiment}: complete loose dir, zipping in place "
+                  f"({len(expected)} PNGs)", flush=True)
+            return _write_plots_zip(plots_zip, loose_dir, expected,
+                                    experiment, loose_dir=loose_dir)
+
         out_dir = os.path.join(scratch_root, experiment)
         os.makedirs(out_dir, exist_ok=True)
-        # Seed scratch from a pre-existing loose render (reading a
-        # cloud-only placeholder hydrates it).
-        if os.path.isdir(loose_dir):
-            seeded = 0
-            for f in os.listdir(loose_dir):
-                if f.endswith(".png") and not os.path.exists(os.path.join(out_dir, f)):
-                    shutil.copy2(os.path.join(loose_dir, f), os.path.join(out_dir, f))
-                    seeded += 1
-            if seeded:
-                print(f"{experiment}: seeded {seeded} PNGs from loose dir", flush=True)
+        # Seed scratch from a pre-existing partial loose render.
+        seeded = 0
+        for f in loose_have:
+            if not os.path.exists(os.path.join(out_dir, f)):
+                shutil.copy2(os.path.join(loose_dir, f), os.path.join(out_dir, f))
+                seeded += 1
+        if seeded:
+            print(f"{experiment}: seeded {seeded} PNGs from loose dir", flush=True)
     else:
         if limit > 0:
             members = members[:limit]
@@ -226,33 +301,15 @@ def plot_run(results_dir: str, experiment: str, epoch: str = "best",
         print(f"{experiment}: keeping scratch for resume ({out_dir})", flush=True)
         return False
 
-    # Zip the scratch (atomic: write .tmp, verify, then replace), then drop
-    # the loose dir and scratch.
-    expected = {os.path.splitext(os.path.basename(m))[0] + ".png" for m in members}
+    # Zip the scratch, then drop the loose dir and scratch.
     have = {f for f in os.listdir(out_dir) if f.endswith(".png")}
     missing = expected - have
     if missing:
         print(f"{experiment}: {len(missing)} PNGs missing after render "
               f"(e.g. {sorted(missing)[:3]}); keeping scratch, no zip", flush=True)
         return False
-    tmp_zip = plots_zip + ".tmp"
-    with zipfile.ZipFile(tmp_zip, "w", compression=zipfile.ZIP_STORED) as zf:
-        for f in sorted(expected):
-            zf.write(os.path.join(out_dir, f), arcname=f)
-    with zipfile.ZipFile(tmp_zip) as zf:
-        n_zipped = sum(1 for n in zf.namelist() if n.endswith(".png"))
-    if n_zipped != len(expected):
-        print(f"{experiment}: zip verification failed ({n_zipped} != "
-              f"{len(expected)}); keeping scratch", flush=True)
-        os.remove(tmp_zip)
-        return False
-    os.replace(tmp_zip, plots_zip)
-    if os.path.isdir(loose_dir):
-        shutil.rmtree(loose_dir)
-    shutil.rmtree(out_dir)
-    print(f"{experiment}: plots.zip written ({n_zipped} PNGs), loose dir removed",
-          flush=True)
-    return True
+    return _write_plots_zip(plots_zip, out_dir, expected, experiment,
+                            loose_dir=loose_dir, scratch_dir=out_dir)
 
 
 def main():
@@ -321,6 +378,14 @@ def main():
         if args.output_root:
             return os.path.join(args.output_root, exp)
         return None  # default: <experiment>/validation/<epoch>/plots
+
+    if args.zip_mode and len(experiments) > 1:
+        print(f"Ordering {len(experiments)} runs: locally-hydrated loose dirs "
+              f"first (net-zero disk conversions before download-heavy ones)",
+              flush=True)
+        score = {e: _local_score(args.results_dir, e, args.epoch)
+                 for e in experiments}
+        experiments.sort(key=lambda e: -score[e])
 
     ok = True
     for i, exp in enumerate(experiments, 1):
