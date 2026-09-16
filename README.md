@@ -175,6 +175,9 @@ See: [analysis.md](../geoindex/docs/geoindex-model/analysis.md)
 | `analysis/compare_predictions.py` | Multi-model prediction overlay plots |
 | `analysis/evaluate_mcd.py` | MCD coverage and calibration |
 | `analysis/visualize_gnn_graph.py` | GNN learned adjacency heatmap |
+| `analysis/infer_checkpoint.py` | Any checkpoint → npz of deterministic + MC-dropout forecasts on an anchor index (Hydra-free; also for real-time tables) |
+| `analysis/score_forecast_npz.py` | Like-for-like scores of several npz forecasts vs persistence/recurrence/climatology, storm-rise, events, coverage, block bootstrap |
+| `analysis/plot_coauthor_eval.py` | Figures for the 2026-09 co-author model evaluation |
 
 ## Testing
 
