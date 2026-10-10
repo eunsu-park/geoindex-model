@@ -164,8 +164,9 @@ See: [analysis.md](../geoindex/docs/geoindex-model/analysis.md)
 | Script | Shell | Description |
 |--------|-------|-------------|
 | `analysis/run_attention.py` | `./attention.sh` | Transformer attention weight extraction |
-| `analysis/run_mcd.py` | `./mcd.sh` | Monte Carlo Dropout uncertainty |
 | `analysis/run_saliency.py` | `./saliency.sh` | Gradient-based saliency maps (SDO) |
+
+MC-dropout is folded into the validation pass (`src/uncertainty.py`); there is no standalone `run_mcd.py` / `mcd.sh`.
 
 ### Post-hoc Evaluation (process existing results)
 
@@ -178,6 +179,10 @@ See: [analysis.md](../geoindex/docs/geoindex-model/analysis.md)
 | `analysis/infer_checkpoint.py` | Any checkpoint → npz of deterministic + MC-dropout forecasts on an anchor index (Hydra-free; also for real-time tables) |
 | `analysis/score_forecast_npz.py` | Like-for-like scores of several npz forecasts vs persistence/recurrence/climatology, storm-rise, events, coverage, block bootstrap |
 | `analysis/plot_coauthor_eval.py` | Figures for the 2026-09 co-author model evaluation |
+| `analysis/recalibrate_mcd.py` | Post-hoc MC-dropout interval recalibration → `validation/<epoch>/calibration.json` |
+| `analysis/plot_validation_samples.py` | Per-event validation plots at sweep scale (regex filter, resume, `--zip` per run) |
+| `analysis/coauthor_focal_cv.py` | 5-fold CV harness for the co-author's focal recipe (their training loop, `--model` / `--fold`) |
+| `analysis/aggregate_coauthor_focal_cv.py` | Scores the fold checkpoints of both recipes → `cv_summary.{csv,md}` with persistence / recurrence / bias, paper-format table |
 
 ## Testing
 
