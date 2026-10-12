@@ -107,7 +107,7 @@ case "$CONFIG_NAME" in
     *)                                    EXP_PREFIX="" ;;
 esac
 
-# All 2026-08 ap sweeps (direct / storm / quiet / recursive, server or Mac)
+# All 2026-08 ap sweeps (direct / storm / quiet / recursive; server_* or mac_* profiles)
 # share the short-horizon io grid: input {6h,12h,18h,1d} x output {1h..6h}.
 case "$CONFIG_NAME" in
     server_ap|mac_ap|server_ap_storm|mac_ap_storm|server_ap_quiet|mac_ap_quiet|server_ap_recursive|mac_ap_recursive)

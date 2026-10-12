@@ -1,4 +1,4 @@
-# Local Development Configuration (GPU server with NAS mount)
+# Local Development Configuration (CUDA)
 # Inherits from base.yaml and overrides environment-specific settings.
 
 defaults:
@@ -6,7 +6,7 @@ defaults:
   - _self_
 
 # =============================================================================
-# Environment (GPU server with NAS mount)
+# Environment (CUDA; machine-specific absolute paths)
 # =============================================================================
 environment:
   device: "cuda"

@@ -1,7 +1,7 @@
 """Render per-sample prediction plots for every validation anchor of a run.
 
 Batch sweeps run with ``validation.save_plots: false`` (plots are heavy and
-pollute the cloud-synced results tree), so this script regenerates the plots
+bloat the results tree), so this script regenerates the plots
 on demand from the validation archive
 (``<experiment>/validation/<epoch>/npz.zip``; one ``.npz`` per anchor with
 denormalized ``inputs``/``targets``/``predictions`` and the variable name
@@ -13,7 +13,7 @@ classic per-variable layout.
 
 Full-sweep renders are large (a full-period validation index is ~23k anchors
 per run, tens of GB of PNGs across a sweep): run them where the results are
-LOCAL (the GPU server), and point ``--output-root`` OUTSIDE any cloud-synced
+on local disk, and point ``--output-root`` OUTSIDE any cloud-synced
 tree. Existing PNGs are skipped, so an interrupted sweep resumes where it
 stopped (``--overwrite`` forces a re-render).
 

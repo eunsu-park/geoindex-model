@@ -21,7 +21,7 @@
 # profile with "ap_recursive_" (e.g. ap_recursive_in2d_out6h_gnn_transformer),
 # so they never collide with the direct ap_* results.
 #
-# Launch (GPU server):
+# Launch:
 #   ./train.sh --config-name server_ap_recursive
 #   (the short-horizon io filter is applied automatically by train.sh)
 

@@ -1,9 +1,8 @@
-# Mac configuration for the hp30 target (Apple Silicon / MPS).
+# Apple Silicon (MPS) configuration for the hp30 target.
 #
 # Inherits server_hp.yaml (all hp30 target wiring: indices, input variables,
 # GNN node swap, mse loss, per-target stats cache) and overrides only the
-# device and the absolute roots for the Mac. See mac_ap.yaml for the
-# cloud-sync caveat (do not run the same experiment on both machines).
+# device and the absolute roots.
 #
 # Prereq:  conda activate geoindex
 

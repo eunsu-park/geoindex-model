@@ -11,7 +11,7 @@
 # Experiment naming: runners prefix experiments from this profile with
 # "ap_quiet_" (e.g. ap_quiet_in12h_out6h_gnn_transformer).
 #
-# Launch (GPU server):
+# Launch:
 #   ./train.sh --config-name server_ap_quiet --max-jobs 4
 
 defaults:

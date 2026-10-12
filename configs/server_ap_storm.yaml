@@ -11,7 +11,7 @@
 # Experiment naming: runners prefix experiments from this profile with
 # "ap_storm_" (e.g. ap_storm_in12h_out6h_gnn_transformer).
 #
-# Launch (GPU server):
+# Launch:
 #   ./train.sh --config-name server_ap_storm --max-jobs 4
 #   (the short-horizon io filter is applied automatically by train.sh)
 

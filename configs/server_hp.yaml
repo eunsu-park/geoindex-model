@@ -1,6 +1,6 @@
 # Server Configuration for the hp30 target.
 #
-# Inherits server_ap.yaml (GPU server paths, table mode) and swaps everything
+# Inherits server_ap.yaml (CUDA paths, table mode) and swaps everything
 # that is target-specific:
 #   - index directory    → total_hp/ (hp30 storm labels)
 #   - input variables     → 21 solar-wind columns + hp30 (ap30 is dropped)

@@ -1,4 +1,4 @@
-# Dev Configuration (local Mac, ~/Projects/GeoIndex)
+# Dev Configuration (MPS, ~/Projects/GeoIndex)
 # Inherits every override from local.yaml and only replaces the environment paths.
 
 defaults:
@@ -6,7 +6,7 @@ defaults:
   - _self_
 
 # =============================================================================
-# Environment (local Mac, cloud-synced ~/Projects/GeoIndex (shared with the GPU server))
+# Environment (MPS, ~/Projects/GeoIndex; machine-specific absolute paths)
 # =============================================================================
 environment:
   device: "mps"

@@ -1,11 +1,11 @@
-# Server Configuration for the ap30 target (GPU server, ~/Projects/GeoIndex (cloud-synced; also mounted on the Mac)).
+# Server Configuration for the ap30 target (CUDA, ~/Projects/GeoIndex).
 #
 # Inherits local.yaml (table mode, batch/epoch/training settings) and replaces
 # the environment paths and the index directory. The ap30 input/target come
 # straight from base.yaml (input = 21 solar-wind columns + ap30, target = ap30),
 # so nothing extra is needed here for the model wiring.
 #
-# Expected data layout on the server:
+# Expected data layout:
 #   /home/eunsupark/Projects/GeoIndex/datasets/
 #     data.parquet
 #     total_ap/{train_index.csv, validation_index.csv}   # ap30 labels
@@ -18,7 +18,7 @@ defaults:
   - _self_
 
 # =============================================================================
-# Environment (GPU server, ~/Projects/GeoIndex (cloud-synced; also mounted on the Mac))
+# Environment (CUDA, ~/Projects/GeoIndex)
 # =============================================================================
 environment:
   device: "cuda"
@@ -43,7 +43,7 @@ mcd:
   create_plots: false
 
 # Batch sweeps: never render per-anchor attention plots (a single run's
-# attention plots.zip reached 7 GB on the 2026-08 Mac backfill).
+# attention plots.zip reached 7 GB in the 2026-08 backfill).
 attention:
   create_plots: false
 
@@ -63,7 +63,7 @@ data:
     stat_file: "table_stats_ap.pkl"
 
 # Batch sweeps: skip per-sample validation plots (plots.zip is ~0.5–1.5 GB per
-# run and pollutes the cloud-synced results tree; regenerate on demand for a
+# run and bloats the results tree; regenerate on demand for a
 # selected model only).
 validation:
   save_plots: false

@@ -1,10 +1,8 @@
-# Mac configuration for the ap30 target (Apple Silicon / MPS, ~/Projects/GeoIndex).
+# Apple Silicon (MPS) configuration for the ap30 target (~/Projects/GeoIndex).
 #
-# Mirror of server_ap.yaml for running sweeps (e.g. CV5) directly on the Mac:
+# Mirror of server_ap.yaml for running sweeps (e.g. CV5) on MPS:
 # same indices, per-target stats cache and cv_dir; only the device and the
-# absolute roots differ. The ~/Projects/GeoIndex tree is cloud-synced with the
-# GPU server, so results written here appear on the server and vice versa —
-# do NOT run the same experiment name on both machines at once.
+# absolute roots differ.
 #
 # Prereq:  conda activate geoindex
 
@@ -34,7 +32,7 @@ data:
     stat_file: "table_stats_ap.pkl"
 
 # Batch sweeps: skip per-sample validation plots (plots.zip is ~0.5–1.5 GB per
-# run and pollutes the cloud-synced results tree; regenerate on demand for a
+# run and bloats the results tree; regenerate on demand for a
 # selected model only).
 validation:
   save_plots: false

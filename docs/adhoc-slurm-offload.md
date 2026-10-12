@@ -39,7 +39,7 @@ checkpoints and optimizer state to shrink the payload. Analysis *outputs*
 (`{exp}/{phase}/best/…`) are written fresh on the cluster — do not transfer them.
 
 ```bash
-# From the GPU server (paths as on that host)
+# From this device (adjust SRC to the local data root)
 SRC=/home/eunsupark/Storage/geoindex
 DST=cluster:$SCRATCH/geoindex          # adjust to the cluster path
 

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Launch table-mode training on the GPU server.
+# Launch table-mode training (CUDA).
 #
 # Data layout expected under environment.data_root
 #   (/home/eunsupark/Storage/geoindex/datasets):
