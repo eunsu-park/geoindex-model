@@ -40,7 +40,7 @@ checkpoints and optimizer state to shrink the payload. Analysis *outputs*
 
 ```bash
 # From this device (adjust SRC to the local data root)
-SRC=/home/eunsupark/Storage/geoindex
+SRC=/home/eunsupark/Projects/GeoIndex
 DST=cluster:$SCRATCH/geoindex          # adjust to the cluster path
 
 # Data bundle
@@ -72,14 +72,14 @@ rsync -a --prune-empty-dirs \
 
 ## 3. Path handling (temporary, no repo changes)
 
-`server_ap.yaml` hardcodes `/home/eunsupark/Storage/geoindex/{datasets,results}`.
+`server_ap.yaml` hardcodes `/home/eunsupark/Projects/GeoIndex/{datasets,results}`.
 Cleanest temporary fix — make that path resolve on the cluster via a symlink, so
 `server_ap` / `server_hp` work **unmodified** (keeps the `ap_`/`hp_` prefix and
 the hp `~…gnn_variable_groups.ap30` drop intact):
 
 ```bash
 mkdir -p "$SCRATCH/geoindex"
-ln -s "$SCRATCH/geoindex" /home/eunsupark/Storage/geoindex   # if home path matches
+ln -s "$SCRATCH/geoindex" /home/eunsupark/Projects/GeoIndex   # if home path matches
 ```
 
 If you cannot recreate that home path, do **not** invent a new config profile
@@ -129,7 +129,7 @@ module load cuda/<ver>          # cluster-specific
 source activate geoindex        # or conda activate
 cd "$SLURM_SUBMIT_DIR"
 
-RESULTS=/home/eunsupark/Storage/geoindex/results
+RESULTS=/home/eunsupark/Projects/GeoIndex/results
 ./run_pending.sh --config-name server_ap --max-jobs 4
 SAVE_ROOT=$RESULTS ./run_pending.sh --config-name server_hp --max-jobs 4
 ```
@@ -181,7 +181,7 @@ case "$TGT" in
   hp) CN=server_hp; PFX=hp_; EXTRA=("~data.timeseries.gnn_variable_groups.ap30") ;;
 esac
 EXP="${PFX}${IO}_${MODEL}"
-ROOT=/home/eunsupark/Storage/geoindex/results
+ROOT=/home/eunsupark/Projects/GeoIndex/results
 
 # Marker-based skip (idempotent on requeue)
 case "$PHASE" in

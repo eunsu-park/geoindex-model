@@ -8,10 +8,10 @@ mean / std for each metric).
 
 Usage:
     python scripts/aggregate_cv_results.py \\
-        --save-root /opt/nas/ap_share/results \\
+        --save-root ~/Projects/GeoIndex/results \\
         --io in12h_out12h \\
         --epoch best \\
-        --output-dir /opt/nas/ap_share/results/_cv_summary/in12h_out12h
+        --output-dir ~/Projects/GeoIndex/results/_cv_summary/in12h_out12h
 """
 
 import argparse

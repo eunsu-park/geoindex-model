@@ -5,7 +5,7 @@ with THEIR training code on OUR chronological folds (`datasets/cv5_ap/fold{1..5}
 
 The loss, the oversampling scheme, the optimizer, the gradient clipping, the metric
 function and the checkpoint-selection rule are copied verbatim from
-`~/PostBox/GeoIndex/20260922/DeepAP/code/geoindex-model/Zhenduo_baseline/train_{tcn,lstm}.py`
+`~/Projects/GeoIndex/postbox/20260922/DeepAP/code/geoindex-model/Zhenduo_baseline/train_{tcn,lstm}.py`
 and from the 2026-09-16 `Zhenduo_focal/train_focal_oversampling.py` (gnn_transformer).
 What this file adds is only parametrisation:
 

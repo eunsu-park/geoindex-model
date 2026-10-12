@@ -2,11 +2,11 @@
 # Launch table-mode training (CUDA).
 #
 # Data layout expected under environment.data_root
-#   (/home/eunsupark/Storage/geoindex/datasets):
+#   (/home/eunsupark/Projects/GeoIndex/datasets):
 #     data.parquet
 #     total_ap/{train_index.csv, validation_index.csv}   # ap30 labels
 #     total_hp/{train_index.csv, validation_index.csv}   # hp30 labels
-# Results are written under /home/eunsupark/Storage/geoindex/results.
+# Results are written under /home/eunsupark/Projects/GeoIndex/results.
 #
 # Prereq:  conda activate geoindex
 #
